@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
+from audit.lang.hints import detect_languages, hints_for
 from audit.runner import (
     AgentRunError,
     QuotaExhaustedError,
@@ -59,6 +60,8 @@ async def run_hunt(
             db.update_task_status(task.task_id, "running")
             scratch = ctx.work_dir("hunt", task.task_id)
             subsystem_hint = task.target_files[0] if task.target_files else None
+            languages = detect_languages(task.target_files)
+            language_hints = hints_for(languages, specialist=None, code=None)
             user_input = {
                 "task_id": task.task_id,
                 "attack_class": task.attack_class,
@@ -68,6 +71,7 @@ async def run_hunt(
                 "repo_path": str(ctx.repo_path),
                 "scratch_dir": str(scratch),
                 "recon_summary": truncated_recon_summary(recon_summary, subsystem_hint),
+                "language_hints": language_hints,
                 **ctx.extras(),
             }
             try:

@@ -27,6 +27,7 @@ running it.
     "architecture": { ... },        // from recon: entry_points, trust_boundaries
     "subsystem_for_task": { ... }   // the relevant subsystem block
   },
+  "language_hints": "── Python ──\nWhere to look first ...",
   "scope_notes": "<optional verbatim text — operator-defined exclusions / context>",
   "live_target": {
     "url": "http://server.local:8888",
@@ -38,6 +39,21 @@ running it.
 `scope_notes` and `live_target` are optional. When `live_target` is
 present, your network egress is allowed **only** to that host (and
 `127.0.0.1`/local loopback). Do not call any other external host.
+
+# Research lens
+
+`language_hints` (when non-empty) is a **research lens**: language-specific
+sinks, sources, and patterns worth checking first for the language(s)
+detected in `target_files`, keyed by the same attack-class thinking you're
+already doing. Read it before you start grepping — it points you at the
+idiomatic vulnerable patterns for this language (e.g. `eval`/`pickle.load`
+for Python, `ObjectInputStream` for Java) instead of you rediscovering them
+from scratch. Treat it as a **seed list, not a checklist**: it is
+non-exhaustive by construction, so keep reasoning past it — an absence of a
+listed pattern is not evidence of absence of the vulnerability class, and a
+listed pattern still requires you to trace source→sink and rule out
+sanitizers before it becomes a finding. If `language_hints` is empty or
+absent, proceed on `target_files` and `recon_summary` alone as before.
 
 # Tools available
 
