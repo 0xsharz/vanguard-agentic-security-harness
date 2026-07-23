@@ -12,6 +12,9 @@ work/
 results/
 *.log
 
+# bench harness scratch (clones + phase-driver state, regenerated per run)
+bench/bench_workdir/
+
 # Intentionally-vulnerable test app — kept out of history
 test_target/
 test_target/**
