@@ -17,4 +17,9 @@ Modules:
     run             -- phase driver (clone -> scan -> score -> tally) with a
                        resumable JSON state file; `--tally-only` renders a
                        scorecard from existing state without scanning.
+    analyze_misses  -- self-tuning miss analysis: for each CVE `scorer`
+                       scores as missed, locate WHICH pipeline stage lost it
+                       (recon/hunt/validate/dedupe/trace) and, optionally
+                       (`--diagnose`, needs network), suggest a minimal
+                       prompt fix for a human to apply.
 """
