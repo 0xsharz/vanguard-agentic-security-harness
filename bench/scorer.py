@@ -10,8 +10,11 @@ Match rule (per the task brief): basename(file) + CWE/type class, line-tolerant.
   - File: compared by basename only (detected findings may report paths
     relative to a different clone root than ground truth's `file` field).
   - Class: if both sides carry a `CWE-NNN` value (in `cwe`, or in `type`/
-    `vuln_class` when it's itself a CWE id), compare those; otherwise fall
-    back to a case-insensitive comparison of `vuln_class`/`type` labels.
+    `vuln_class` when it's itself a CWE id), compare those. `cwe` is
+    OPTIONAL on detected findings (schemas/finding.schema.json), so a side
+    lacking one is first resolved via a small free-text `vuln_class` ->
+    CWE synonym table before falling back to a case-insensitive comparison
+    of raw `vuln_class`/`type` labels.
   - Line: only enforced when the ground-truth item specifies a `line` hint;
     a detected finding matches if that line falls within
     `line_tolerance` (default 15) lines of the finding's [line_start, line_end].
@@ -54,13 +57,51 @@ def _cwe_of(item: dict) -> str | None:
     return None
 
 
+# Small, deliberately-conservative free-text -> CWE-id synonym table. This
+# exists solely to bridge `cwe` being OPTIONAL on detected findings
+# (schemas/finding.schema.json requires `vuln_class` but not `cwe`): a real
+# `audit` run may report only a free-text `vuln_class` with no `cwe` at all,
+# while ground truth conventionally encodes class as a `CWE-NNN` id in
+# `type` (bench/ground_truth/README.md). Only well-known, unambiguous
+# labels are listed; an unrecognized label resolves to no CWE (safe
+# fallback to the free-text label comparison below) rather than guessing.
+_VULN_CLASS_TO_CWE = {
+    "code injection": "cwe-94", "code-injection": "cwe-94", "eval injection": "cwe-94",
+    "sql injection": "cwe-89", "sqli": "cwe-89", "sql-injection": "cwe-89",
+    "cross-site scripting": "cwe-79", "xss": "cwe-79",
+    "path traversal": "cwe-22", "path-traversal": "cwe-22", "directory traversal": "cwe-22",
+    "command injection": "cwe-78", "os command injection": "cwe-78", "command-injection": "cwe-78",
+    "sensitive data exposure": "cwe-200", "information exposure": "cwe-200",
+    "info-leak": "cwe-200", "info leak": "cwe-200",
+    "insecure deserialization": "cwe-502", "deserialization": "cwe-502",
+    "ssrf": "cwe-918", "server-side request forgery": "cwe-918",
+    "xxe": "cwe-611", "xml external entity": "cwe-611",
+    "hardcoded credentials": "cwe-798", "hardcoded secret": "cwe-798",
+    "open redirect": "cwe-601",
+    "insecure randomness": "cwe-330", "weak randomness": "cwe-330",
+}
+
+
+def _resolved_cwe(item: dict) -> str | None:
+    """`_cwe_of`, plus a synonym-table fallback for items that only carry a
+    recognized free-text `vuln_class`/`type` label and no CWE id anywhere."""
+    cwe = _cwe_of(item)
+    if cwe:
+        return cwe
+    for key in ("vuln_class", "type"):
+        label = _norm(item.get(key))
+        if label in _VULN_CLASS_TO_CWE:
+            return _VULN_CLASS_TO_CWE[label]
+    return None
+
+
 def _class_label(item: dict) -> str:
     """Best-effort free-text class label when neither side has a CWE id."""
     return _norm(item.get("vuln_class") or item.get("type"))
 
 
 def classes_match(detected: dict, gt: dict) -> bool:
-    d_cwe, g_cwe = _cwe_of(detected), _cwe_of(gt)
+    d_cwe, g_cwe = _resolved_cwe(detected), _resolved_cwe(gt)
     if d_cwe and g_cwe:
         return d_cwe == g_cwe
     label = _class_label(detected)

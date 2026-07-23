@@ -122,6 +122,24 @@ def test_scorer_cwe_match_overrides_differing_free_text_label():
     assert result["tp"] == 1
 
 
+def test_scorer_detected_missing_cwe_matches_via_vuln_class_synonym():
+    # `cwe` is OPTIONAL on detected findings (schemas/finding.schema.json)
+    # -- a real `audit` run may report only a free-text `vuln_class` with no
+    # `cwe` key/value at all, while ground truth encodes class as a CWE id
+    # in `type`. An exact file+line match should still count as a TP, not
+    # be thrown out as a class mismatch.
+    detected = [_detected("f_1", "jsonschema.py", 118, 122, "code-injection", cwe=None)]
+    gt = [_gt("GT-001", "jsonschema.py", 120, "CWE-94")]
+
+    result = scorer.score(detected, gt)
+
+    assert result["tp"] == 1
+    assert result["fp"] == 0
+    assert result["fn"] == 0
+    assert result["recall"] == 1.0
+    assert result["missed"] == []
+
+
 def test_scorer_class_mismatch_blocks_match_even_with_same_file():
     detected = [_detected("f_1", "http.py", 45, 45, "info-leak", cwe="CWE-200")]
     gt = [_gt("GT-001", "http.py", 45, "CWE-22")]  # different CWE, same file/line
