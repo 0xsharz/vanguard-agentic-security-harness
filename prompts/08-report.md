@@ -64,6 +64,20 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
    before emitting. If a previous turn told you the output failed
    validation with specific errors, fix only those errors.
 
+# Resolved input inventory (completeness artifact)
+
+The report also carries an `input_inventory` array — the resolved completeness
+ledger: every attacker-controllable input Recon enumerated, each tagged with the
+disposition it was reconciled to (`covered` — a finding or hunt task reached it;
+`uncovered` — nothing did). This mirrors the "every input gets a disposition;
+totals must match" completeness guarantee: it proves coverage rather than
+asserting it.
+
+**Do NOT synthesize this array yourself.** It is injected verbatim from the run
+state (the authoritative ledger) after you emit your JSON, so omit `input_inventory`
+from your output entirely — focus only on the `findings`. Any value you write for
+it will be overwritten by the reconciled ledger.
+
 # Constraints
 
 - Only canonical-and-reachable findings appear. If the trace says

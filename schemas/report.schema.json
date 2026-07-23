@@ -102,6 +102,25 @@
           "recommendation": { "type": "string", "minLength": 20 }
         }
       }
+    },
+    "input_inventory": {
+      "type": "array",
+      "description": "Resolved completeness ledger — every attacker-controllable input Recon enumerated, each with its reconciled disposition (covered|uncovered). Injected from the run state by report.py; a completeness artifact, not a per-finding record.",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_type", "location", "trust_level", "disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "source_type": { "type": ["string", "null"] },
+          "location": { "type": ["string", "null"] },
+          "variable": { "type": ["string", "null"] },
+          "entry_point": { "type": ["string", "null"] },
+          "trust_level": { "type": ["string", "null"] },
+          "disposition": { "type": ["string", "null"], "description": "covered | uncovered | null (unreconciled)" },
+          "disposition_evidence": { "type": ["string", "null"] }
+        }
+      }
     }
   }
 }

@@ -47,11 +47,24 @@ async def run_recon(ctx: StageContext, db: StateDB, max_tasks: int = DEFAULT_MAX
         task.setdefault("source", "recon")
         db.add_task(ctx.run_id, task)
 
+    # Persist the attacker-controllable input inventory. This is the
+    # completeness ledger the orchestrator later reconciles: every input must
+    # reach a disposition. Guarded per-item so a malformed entry can't lose the
+    # rest (and the whole field is optional for pre-F1 recon outputs).
+    inputs = payload.get("inputs", []) or []
+    for inp in inputs:
+        try:
+            db.add_input(ctx.run_id, inp)
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning("[%s] recon: could not persist input %r: %s",
+                        ctx.run_id, inp.get("id"), e)
+
     log.info(
-        "[%s] recon done: subsystems=%d entry_points=%d initial_tasks=%d cost=$%.4f",
+        "[%s] recon done: subsystems=%d entry_points=%d inputs=%d initial_tasks=%d cost=$%.4f",
         ctx.run_id,
         len(payload.get("subsystems", [])),
         len(payload.get("architecture", {}).get("entry_points", [])),
+        len(inputs),
         len(payload.get("initial_tasks", [])),
         result.cost_usd or 0.0,
     )

@@ -50,6 +50,23 @@ Read, Grep, Glob, Bash (read-only inspection only).
 A single JSON object matching `schemas/recon_output.schema.json`. No
 prose, no markdown fence, no commentary — just the JSON.
 
+In addition to `subsystems`, `architecture`, and `initial_tasks`, the object
+**must** include an `inputs` array — the attacker-controllable Input Inventory
+(see the **Input Inventory** section below). This inventory is the pipeline's
+completeness ledger: downstream, every input is reconciled to a disposition, so
+enumerate exhaustively. Each item:
+
+```json
+{
+  "id": "in_1",
+  "source_type": "HTTP query param",
+  "location": "app.py:14",
+  "variable": "q",
+  "entry_point": "GET /search",
+  "trust_level": "unauthenticated"
+}
+```
+
 # Method
 
 1. **Top-level scan**. `ls -la`, root `README.md`, build files
@@ -68,7 +85,9 @@ prose, no markdown fence, no commentary — just the JSON.
    extraction, message broker → command exec.)
 5. **External inputs**. Concrete input names with the actor that can
    control them (`anonymous_user`, `authenticated_user`, `admin`,
-   `internal_service`).
+   `internal_service`). Then build the full **Input Inventory** (dedicated
+   section below) into the output `inputs[]` array — this is the completeness
+   ledger and drives the entire audit.
 6. **Mine the git history for past security patches**. Past security
    fixes are leading indicators of bug *classes* in this codebase. The
    patched files are hardened; **sibling files with the same idiom often
@@ -99,6 +118,91 @@ prose, no markdown fence, no commentary — just the JSON.
      `target_files` may span 2–3 files. Keep one chain per task — this
      is the only exception to "one attack class per task".
 
+# Input Inventory (CRITICAL — this drives the entire audit)
+
+After reading the file tree and identifying the tech stack, **enumerate every
+point where external data enters the codebase.** This inventory is the
+completeness guarantee — every input gets reconciled to a disposition
+downstream, and the audit is not done until the inventory is fully resolved.
+
+Use the **Grep tool** to find all user-controllable inputs, adapting patterns to
+the detected frameworks. Do NOT use the examples below verbatim — build patterns
+from what you actually found.
+
+**Where to look for inputs** — search for the detected framework's input-parsing
+APIs to find every entry point, then read each entry point to enumerate its
+inputs. Adapt to ALL entry point types present in the codebase, not just HTTP:
+
+- **HTTP** — Flask/Django: `request.args`, `request.form`, `request.json`,
+  `request.headers`, `request.cookies`; FastAPI path/query/body params; Express:
+  `req.params`, `req.query`, `req.body`, `req.headers`, `req.cookies`; Spring:
+  `@RequestParam`, `@PathVariable`, `@RequestBody`; Go net/http: `r.URL.Query()`,
+  `r.FormValue()`, `r.Header.Get()`
+- **gRPC / RPC**: protobuf message fields in service method signatures, Thrift
+  struct fields
+- **CLI**: `argparse` / `click` arguments, `sys.argv`, `cobra.Command` flags,
+  `flag.Parse`
+- **Message queues**: Kafka/SQS/RabbitMQ consumer message bodies, message
+  headers/attributes
+- **Serverless**: `event` object fields (API Gateway, SQS trigger, SNS trigger,
+  S3 event, etc.)
+- **WebSocket**: message handler payloads, connection upgrade parameters
+- **File processors / uploads**: file content, file names, MIME types from
+  watched directories or upload endpoints (multipart form data)
+- **Deserialized input**: `pickle.loads`, `yaml.load`, `marshal`, `json` decoded
+  into typed objects — the deserialized fields are attacker-controlled inputs
+- **Scheduled jobs / cron**: if a job reads from a store that an attacker can
+  write to, the store values are inputs
+- **DB reads of attacker-writable stores**: values read from a store an attacker
+  could have written to via another endpoint (second-order inputs)
+- **Third-party API responses**: data returned from external services the
+  attacker could influence (e.g. by controlling what's stored in that service)
+- Adapt further for any other input vectors present in the detected stack.
+
+The examples above are starting points, not exhaustive. After identifying the
+codebase's frameworks and libraries, add any additional input-parsing APIs,
+middleware, or data-binding patterns you recognize — including project-specific
+wrappers, custom request parsers, or framework plugins not listed here.
+
+**For each input, record** — one object in the output `inputs[]` array:
+
+1. **id**: a stable, unique identifier (`in_1`, `in_2`, …).
+2. **source_type**: HTTP param / header / body field / cookie / CLI arg / env
+   var / queue message / file upload / deserialized input / DB read / etc.
+3. **location**: `file:line` where the input enters the codebase.
+4. **variable**: what the input is assigned to in code (use `N/A` for a
+   no-input endpoint).
+5. **entry_point**: which route, CLI command, queue consumer, gRPC method, or
+   other entry point receives it.
+6. **trust_level**: exactly one of `unauthenticated` / `authenticated` /
+   `internal` / `privileged` — based on what auth/authz is required to reach
+   this entry point:
+   - `unauthenticated` — reachable with no credential at all.
+   - `authenticated` — requires a valid (non-privileged) user credential.
+   - `internal` — reachable only from inside the trust boundary
+     (service-to-service, private network, not exposed externally).
+   - `privileged` — requires elevated/admin authorization.
+
+**Prioritization**: inputs at the lowest trust level have the highest attacker
+accessibility. Bias the task queue toward `unauthenticated` inputs first, then
+`authenticated`, then `internal`, then `privileged`.
+
+**Completeness check**: After building the inventory, compare it against the
+entry points found in the steps above. Every entry point (HTTP route, CLI
+command, queue consumer, gRPC method, cron job, etc.) should have at least one
+input. If an entry point appears but has zero inputs, either you missed inputs —
+go back and read that entry point's code — OR the endpoint genuinely accepts no
+user input. In the latter case, add a synthetic inventory entry with source_type
+`no-input endpoint`, variable `N/A`, and trust_level based on the authentication
+the endpoint requires. A sensitive operation reachable without authentication is
+an auth-bypass candidate (CWE-306) regardless of whether it processes user data.
+
+**Sibling input rule**: When an extraction point (destructuring, query-param
+parser, DTO/body binding) yields N inputs, enumerate ALL N in the inventory —
+not just the dangerous-looking ones. Also grep each parameter name across ALL
+entry points — the same name at a different route is a separate input.
+Downstream Hunt/Validate stages determine safety, not Recon.
+
 # Constraints
 
 - Each `initial_tasks[*].task_id` must be unique and stable
@@ -120,6 +224,12 @@ prose, no markdown fence, no commentary — just the JSON.
 - If `scope_notes` is provided in input, **respect every exclusion in
   it verbatim**. Don't emit tasks against components or attack classes
   the operator has explicitly placed out of scope.
+- The `inputs` array **must** be present and exhaustive. Each
+  `inputs[*].id` must be unique (`in_1`, `in_2`, …), each `location` must be a
+  real `file:line` you verified, and each `trust_level` must be exactly one of
+  `unauthenticated` / `authenticated` / `internal` / `privileged` (no synonyms
+  like "unauth" or "public"). Apply the sibling input rule — do not drop inputs
+  that merely look safe; downstream stages decide safety.
 - The output **must** parse against the schema. Re-read it before emitting.
 - Do not produce more than `max_tasks` tasks.
 - Do not emit prose — just JSON.

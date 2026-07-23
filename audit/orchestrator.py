@@ -5,19 +5,187 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from audit import stages
 from audit.config import HarnessConfig
 from audit.runner import QuotaExhaustedError
-from audit.state import StateDB
+from audit.state import StateDB, Task
 from audit.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 
+# Upper bound on how many uncovered inputs the reconciliation pass will
+# re-queue as Hunt tasks in a single run. Keeps the completeness pass bounded
+# (a target with hundreds of unreached inputs must not fan out unboundedly).
+RECONCILE_CAP = 20
+
 
 class CostExceeded(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Input reconciliation — the completeness ledger.
+#
+# After the Hunt/Validate loop, every attacker-controllable input that Recon
+# enumerated must reach a disposition. Mirrors VulnHunter's Results-Aggregation
+# completeness check ("every input gets a disposition; totals must match"),
+# reduced to audit's two-value vocabulary: covered / uncovered.
+# ---------------------------------------------------------------------------
+
+# Sensible per-source default attack class for a synthesized reconcile Hunt
+# task. Substring-matched against the input's source_type; falls back to a
+# broad taint trace.
+_RECONCILE_ATTACK_CLASS = [
+    ("file upload", "path_traversal"),
+    ("file", "path_traversal"),
+    ("deserial", "deserialization_pickle"),
+    ("pickle", "deserialization_pickle"),
+    ("yaml", "deserialization_yaml"),
+    ("queue", "deserialization_pickle"),
+    ("cookie", "session_tampering"),
+    ("header", "header_injection"),
+    ("env", "command_injection"),
+    ("cli", "command_injection"),
+    ("db", "sql_injection"),
+    ("sql", "sql_injection"),
+]
+
+
+def _default_attack_class(source_type: str | None) -> str:
+    st = (source_type or "").lower()
+    for key, cls in _RECONCILE_ATTACK_CLASS:
+        if key in st:
+            return cls
+    return "injection"
+
+
+def _location_file(location: str | None) -> str:
+    """Basename of the file portion of a `file:line` location string."""
+    loc = (location or "").strip()
+    if not loc:
+        return ""
+    parts = loc.split(":")
+    while len(parts) > 1 and parts[-1].strip().isdigit():
+        parts.pop()
+    return os.path.basename(":".join(parts)).strip()
+
+
+def _classify_input(
+    inp: dict, finding_basenames: set[str], tasks: list[Task]
+) -> tuple[str, str]:
+    """Decide an input's disposition. Returns (disposition, evidence).
+
+    Rule (per the F1 brief): an input is **covered** if some finding's file
+    matches the input's location file (basename match) OR the input's
+    entry_point appears in a task's scope (scope_hint or target_files);
+    otherwise **uncovered**.
+    """
+    loc_base = _location_file(inp.get("location"))
+    if loc_base and loc_base in finding_basenames:
+        return "covered", f"finding touches {loc_base}"
+    entry = (inp.get("entry_point") or "").strip()
+    if entry:
+        for t in tasks:
+            haystack = (t.scope_hint or "") + " " + " ".join(t.target_files or [])
+            if entry in haystack:
+                return "covered", f"task {t.task_id} scope references '{entry}'"
+    return "uncovered", "no finding file or task scope reached this input"
+
+
+def _synthesize_reconcile_task(inp: dict, n: int) -> dict:
+    """One Hunt task that re-queues an uncovered input for a forward trace."""
+    iid = inp.get("id") or inp.get("input_id") or f"input_{n}"
+    source_type = inp.get("source_type") or "input"
+    location = inp.get("location") or "?"
+    entry = inp.get("entry_point") or "unknown entry point"
+    target = (location.split(":")[0].strip()
+              or _location_file(location) or ".")
+    return {
+        "task_id": f"t_rc_{n}",
+        "source": "reconcile",
+        "attack_class": _default_attack_class(source_type),
+        "scope_hint": (
+            f"Completeness reconciliation for uncovered input {iid}: "
+            f"{source_type} at {location} (entry point {entry}). Trace this "
+            f"attacker-controllable value forward to any dangerous sink."
+        ),
+        "target_files": [target],
+        "rationale": (
+            f"Input {iid} ({source_type}) reached no disposition during the "
+            f"Hunt/Validate loop; reconciliation re-queues it so every "
+            f"enumerated input is traced to a sink or explicitly cleared."
+        ),
+        "priority": 2,
+    }
+
+
+def _reconcile_pass(db: StateDB, run_id: str) -> tuple[list[dict], list[dict]]:
+    """Classify every input once and persist its disposition. Returns
+    (covered, uncovered) lists."""
+    inputs = db.get_inputs(run_id)
+    if not inputs:
+        return [], []
+    finding_basenames = {os.path.basename(f.file) for f in db.get_findings(run_id)}
+    tasks = db.get_all_tasks(run_id)
+    covered: list[dict] = []
+    uncovered: list[dict] = []
+    for inp in inputs:
+        disposition, evidence = _classify_input(inp, finding_basenames, tasks)
+        db.set_input_disposition(inp["input_id"], disposition, evidence)
+        (covered if disposition == "covered" else uncovered).append(inp)
+    return covered, uncovered
+
+
+async def _reconcile_inputs(ctx: StageContext, db: StateDB) -> None:
+    """Reconcile every recon-enumerated input to a disposition.
+
+    Bounded (at most RECONCILE_CAP uncovered inputs are re-queued) and
+    **fail-open**: any error here is logged and swallowed so a reconciliation
+    bug can never abort an otherwise-good run. QuotaExhaustedError is the one
+    exception re-raised, to preserve the resumable-abort contract.
+    """
+    try:
+        inputs = db.get_inputs(ctx.run_id)
+        if not inputs:
+            return
+        covered, uncovered = _reconcile_pass(db, ctx.run_id)
+        log.info(
+            "[%s] reconcile: %d inputs — %d covered, %d uncovered",
+            ctx.run_id, len(inputs), len(covered), len(uncovered),
+        )
+        if not uncovered:
+            return
+
+        capped = uncovered[:RECONCILE_CAP]
+        for n, inp in enumerate(capped, 1):
+            db.add_task(ctx.run_id, _synthesize_reconcile_task(inp, n))
+        beyond = max(0, len(uncovered) - RECONCILE_CAP)
+        log.info(
+            "[%s] reconcile: re-queued %d uncovered inputs as Hunt tasks "
+            "(cap=%d; %d left uncovered beyond cap)",
+            ctx.run_id, len(capped), RECONCILE_CAP, beyond,
+        )
+
+        # Re-run Hunt + Validate ONCE against the reconcile tasks.
+        await stages.run_hunt(ctx, db)
+        await stages.run_validate(ctx, db)
+
+        # Re-reconcile so the final ledger reflects the extra hunt.
+        covered, uncovered = _reconcile_pass(db, ctx.run_id)
+        log.info(
+            "[%s] reconcile (final): %d covered, %d uncovered",
+            ctx.run_id, len(covered), len(uncovered),
+        )
+    except QuotaExhaustedError:
+        raise
+    except Exception as e:  # fail-open — reconciliation must never abort a run
+        log.warning(
+            "[%s] input reconciliation failed (continuing run): %s",
+            ctx.run_id, e,
+        )
 
 
 async def run_pipeline(
@@ -98,6 +266,13 @@ async def run_pipeline(
             if new_tasks == 0:
                 log.info("[%s] gapfill produced 0 tasks — exiting loop", run_id)
                 break
+
+        # ---- Reconciliation: guarantee every enumerated input a disposition ----
+        # Runs after the Hunt/Validate loop, before Dedupe. Fail-open and
+        # bounded (RECONCILE_CAP); may re-run Hunt+Validate once for uncovered
+        # inputs so the final ledger is accurate.
+        _budget_check("reconcile")
+        await _reconcile_inputs(ctx, db)
 
         # ---- Stage 5: Dedupe ----
         _budget_check("dedupe")

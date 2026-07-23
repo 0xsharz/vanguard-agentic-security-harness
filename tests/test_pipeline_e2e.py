@@ -54,6 +54,18 @@ CANNED: dict[str, dict] = {
             "entry_points": ["app.py"],
             "trust_boundaries": [],
         },
+        # F1: attacker-controllable input inventory. `in_name` lives in app.py
+        # (matched by the SQLi finding → covered on the first pass). `in_cli`
+        # lives elsewhere with an entry point no task scopes → uncovered first,
+        # then reconciliation synthesizes a Hunt task naming it and re-reconciles.
+        "inputs": [
+            {"id": "in_name", "source_type": "HTTP query param",
+             "location": "app.py:1", "variable": "name",
+             "entry_point": "GET /lookup", "trust_level": "unauthenticated"},
+            {"id": "in_cli", "source_type": "CLI arg",
+             "location": "manage.py:5", "variable": "--path",
+             "entry_point": "import command", "trust_level": "privileged"},
+        ],
         "initial_tasks": [
             {
                 "task_id": TASK_ID,
@@ -235,6 +247,23 @@ async def test_pipeline_runs_end_to_end(stub_agents, tmp_path) -> None:
         assert report_data["summary"]["total"] == 1
         assert len(report_data["findings"]) == 1
         assert report_data["findings"][0]["finding_id"] == FINDING_ID
+
+        # 3a. F1 completeness: both enumerated inputs reached a disposition in
+        # the DB (none left NULL) and the resolved ledger is in the report.
+        inputs = db.get_inputs(RUN_ID)
+        assert len(inputs) == 2
+        dispo = {i["id"]: i["disposition"] for i in inputs}
+        assert all(v is not None for v in dispo.values()), dispo
+        assert dispo["in_name"] == "covered"  # matched by the SQLi finding's file
+        assert dispo["in_cli"] == "covered"   # covered after reconcile re-queue
+        assert db.get_unresolved_inputs(RUN_ID) == []
+        # The uncovered CLI input was re-queued as a reconcile Hunt task.
+        rc_tasks = [t for t in db.get_all_tasks(RUN_ID) if t.source == "reconcile"]
+        assert [t.task_id for t in rc_tasks] == ["t_rc_1"]
+        # The report carries the resolved inventory as a completeness artifact.
+        inventory = report_data["input_inventory"]
+        assert {e["id"] for e in inventory} == {"in_name", "in_cli"}
+        assert all(e["disposition"] == "covered" for e in inventory)
 
         # 4. Every stage's stub dispatcher was actually invoked — proves
         # the pipeline really reached each of the 8 stages rather than

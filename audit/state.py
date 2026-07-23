@@ -109,11 +109,27 @@ CREATE TABLE IF NOT EXISTS artifacts (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS inputs (
+    input_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    source_type TEXT,
+    location TEXT,
+    variable TEXT,
+    entry_point TEXT,
+    trust_level TEXT,
+    disposition TEXT,
+    disposition_evidence TEXT,
+    raw_json TEXT,
+    created_at REAL NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_run_status ON tasks(run_id, status);
 CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id);
 CREATE INDEX IF NOT EXISTS idx_findings_validation ON findings(validation_status);
 CREATE INDEX IF NOT EXISTS idx_findings_group ON findings(group_id);
 CREATE INDEX IF NOT EXISTS idx_costs_run_stage ON costs(run_id, stage);
+CREATE INDEX IF NOT EXISTS idx_inputs_run ON inputs(run_id);
 """
 
 
@@ -205,6 +221,78 @@ class StateDB:
             "SELECT raw_json FROM recon_outputs WHERE run_id = ?", (run_id,)
         ).fetchone()
         return json.loads(row["raw_json"]) if row else None
+
+    # ---------- inputs (attacker-controllable input inventory) ----------
+
+    def add_input(self, run_id: str, inp: dict) -> str:
+        """Persist one recon-enumerated attacker-controllable input.
+
+        Idempotent (INSERT OR IGNORE on the PK). The stored ``input_id`` is
+        namespaced by run so recon-emitted ids like ``in_1`` cannot collide
+        across runs that share one ``state.db``. Returns the stored input_id."""
+        raw_id = str(inp.get("id") or inp.get("input_id") or "").strip()
+        if not raw_id:
+            raw_id = uuid.uuid4().hex[:12]
+        input_id = raw_id if raw_id.startswith(f"{run_id}:") else f"{run_id}:{raw_id}"
+        self._conn.execute(
+            """INSERT OR IGNORE INTO inputs
+            (input_id, run_id, source_type, location, variable, entry_point,
+             trust_level, disposition, disposition_evidence, raw_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)""",
+            (
+                input_id,
+                run_id,
+                inp.get("source_type"),
+                inp.get("location"),
+                inp.get("variable"),
+                inp.get("entry_point"),
+                inp.get("trust_level"),
+                json.dumps(inp),
+                time.time(),
+            ),
+        )
+        self._conn.commit()
+        return input_id
+
+    def get_inputs(self, run_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM inputs WHERE run_id = ? ORDER BY created_at, input_id",
+            (run_id,),
+        ).fetchall()
+        return [self._row_to_input(r) for r in rows]
+
+    def set_input_disposition(
+        self, input_id: str, disposition: str, evidence: str | None = None
+    ) -> None:
+        self._conn.execute(
+            "UPDATE inputs SET disposition = ?, disposition_evidence = ? WHERE input_id = ?",
+            (disposition, evidence, input_id),
+        )
+        self._conn.commit()
+
+    def get_unresolved_inputs(self, run_id: str) -> list[dict]:
+        """Inputs that have not yet reached a disposition (disposition IS NULL)."""
+        rows = self._conn.execute(
+            "SELECT * FROM inputs WHERE run_id = ? AND disposition IS NULL "
+            "ORDER BY created_at, input_id",
+            (run_id,),
+        ).fetchall()
+        return [self._row_to_input(r) for r in rows]
+
+    @staticmethod
+    def _row_to_input(r: sqlite3.Row) -> dict:
+        raw = json.loads(r["raw_json"]) if r["raw_json"] else {}
+        return {
+            "input_id": r["input_id"],
+            "id": raw.get("id", r["input_id"]),
+            "source_type": r["source_type"],
+            "location": r["location"],
+            "variable": r["variable"],
+            "entry_point": r["entry_point"],
+            "trust_level": r["trust_level"],
+            "disposition": r["disposition"],
+            "disposition_evidence": r["disposition_evidence"],
+        }
 
     # ---------- tasks ----------
 

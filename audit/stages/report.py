@@ -40,6 +40,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
             "summary": {"total": 0, "by_severity": {}},
             "findings": [],
         }
+        _attach_input_inventory(db, ctx.run_id, empty)
         out_path.write_text(json.dumps(empty, indent=2))
         log.info("[%s] report: no reachable findings — wrote empty report to %s",
                  ctx.run_id, out_path)
@@ -65,15 +66,42 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         log.error("[%s] report agent failed: %s — emitting fallback report",
                   ctx.run_id, e)
         fallback = _build_fallback_report(ctx, db, reachable, target)
+        _attach_input_inventory(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(fallback, indent=2))
         return out_path
 
     db.record_cost(ctx.run_id, "report", None, result.raw_result_message)
     db.add_artifact(ctx.run_id, "report", None, "jsonl", str(result.artifact_path))
-    out_path.write_text(json.dumps(result.payload, indent=2))
-    log.info("[%s] report: %d findings written to %s",
-             ctx.run_id, len(result.payload.get("findings", [])), out_path)
+    payload = result.payload
+    # The resolved input inventory is a completeness artifact sourced from the
+    # run state (the ledger), not the agent's imagination — attach it here so
+    # it is authoritative and present on every report, agent-authored or not.
+    _attach_input_inventory(db, ctx.run_id, payload)
+    out_path.write_text(json.dumps(payload, indent=2))
+    log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
+             ctx.run_id, len(payload.get("findings", [])),
+             len(payload.get("input_inventory", [])), out_path)
     return out_path
+
+
+def _attach_input_inventory(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach the resolved input inventory (completeness ledger) to a report
+    payload. Sourced from run state so it is authoritative regardless of what
+    the report agent produced."""
+    inventory = [
+        {
+            "id": inp["id"],
+            "source_type": inp["source_type"],
+            "location": inp["location"],
+            "variable": inp["variable"],
+            "entry_point": inp["entry_point"],
+            "trust_level": inp["trust_level"],
+            "disposition": inp["disposition"],
+            "disposition_evidence": inp["disposition_evidence"],
+        }
+        for inp in db.get_inputs(run_id)
+    ]
+    payload["input_inventory"] = inventory
 
 
 def _group_members_excluding(db: StateDB, run_id: str, group_id: str,
