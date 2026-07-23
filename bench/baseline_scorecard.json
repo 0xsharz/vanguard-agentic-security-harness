@@ -1,0 +1,7 @@
+{
+  "tool": "vash",
+  "target": "datamodel-code-generator@0.55.0",
+  "cve_recall": 0.5454545454545454,
+  "class_recall": 1.0,
+  "note": "Placeholder floor = the offline-reproducible corpus baseline (6/11). Replace with VASH's live cve_recall once a non-reaped `vash run` + `bench` scoring is recorded; the plan's DoD is recall >= max(audit, VulnHunter, VVAH)."
+}

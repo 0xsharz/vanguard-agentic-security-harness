@@ -243,6 +243,44 @@ The agent reads everything you `--add-dir`, including any `.env` or
 `secrets/` directories in the target. Outputs land in `results/<run-id>/`
 which is `.gitignore`d but **not** scrubbed of those reads.
 
+## CI & recall gate
+
+Every PR runs two gates in GitHub Actions (`.github/workflows/ci.yml`):
+
+1. **The full offline test suite** (`python -m pytest -q`) — the
+   enforceable regression gate. All tests must stay green; deterministic,
+   no network, no LLM calls.
+2. **The recall gate** (`python -m bench.recall_gate`) — compares a
+   scorecard's `cve_recall` against the committed floor in
+   `bench/baseline_scorecard.json` (currently the offline-reproducible
+   corpus baseline, 6/11 on `datamodel-code-generator`; see
+   `bench/tests/test_bench.py::test_known_baseline_datamodel_code_generator_recall_is_6_of_11`).
+   CI cannot run a live `vash run` scan on every PR (LLM cost/quota/time),
+   so the PR job runs this gate in **smoke mode** — no `--current`
+   scorecard, so it only confirms the baseline file parses and is wired up
+   correctly, and always exits 0 given a valid baseline. **This is not a
+   live recall check.**
+
+To actually enforce the recall floor, a nightly or manual job records a real
+scorecard (via `vash run` + scoring with `bench.scorer.score_corpus`,
+already unit-tested and reused as-is — recall math is never reimplemented
+here) and passes it as `--current`:
+
+```bash
+vash run --repo <clone of the benchmark target> --run-id nightly
+# score the run's confirmed findings with bench.scorer.score_corpus(...)
+# against bench/ground_truth/*.json and write the result (a dict with a
+# cve_recall/class_recall field) to current_scorecard.json
+python -m bench.recall_gate \
+  --baseline bench/baseline_scorecard.json \
+  --current current_scorecard.json
+```
+
+With `--current` supplied, the gate compares `cve_recall` (or
+`--metric class_recall`) against the baseline and **exits 1** if it
+regressed beyond `--tolerance` (default `0.0`) — that's the check that
+actually fails a build on a recall regression.
+
 ## License
 
 [MIT](LICENSE). Reuse freely. No warranty.

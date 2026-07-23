@@ -22,4 +22,10 @@ Modules:
                        (recon/hunt/validate/dedupe/trace) and, optionally
                        (`--diagnose`, needs network), suggest a minimal
                        prompt fix for a human to apply.
+    recall_gate     -- CI recall-regression gate: compares a committed
+                       scorecard's cve_recall/class_recall (bench.scorer
+                       output shape) against committed baseline_scorecard
+                       .json. Smoke mode (no --current) when CI has no
+                       live scorecard to compare; see .superpowers/sdd/
+                       task-4.5-brief.md.
 """

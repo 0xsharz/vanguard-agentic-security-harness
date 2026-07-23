@@ -1,0 +1,66 @@
+name: CI
+
+# The enforceable gate is the full offline test suite below — every PR must
+# keep it green. The recall-gate step that follows is honest scaffolding,
+# NOT a live recall check: CI has no LLM budget/quota/time to run a real
+# `vash run` scan on every PR, so it runs bench.recall_gate in SMOKE mode
+# (no --current scorecard) here, which only confirms the committed baseline
+# (bench/baseline_scorecard.json) parses and is wired up correctly. See the
+# "nightly recall check" comment at the bottom of this file, and README.md's
+# "CI & recall gate" section, for how a real recall-regression check plugs
+# into this same gate script.
+
+on:
+  pull_request:
+  push:
+    branches: [main, evolve/vulnhunter-imports]
+
+jobs:
+  test:
+    name: Full test suite + recall smoke gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      # The hard gate: every PR must keep the full offline suite green.
+      # Deterministic, no network, no LLM calls.
+      - name: Run test suite
+        run: python -m pytest -q
+
+      # Recall smoke gate (see the file-level comment above): validates
+      # bench/baseline_scorecard.json parses and carries the recall metric.
+      # No --current is passed, so this call cannot fail on an actual
+      # recall regression — it only fails if the baseline file itself is
+      # missing/broken. It always exits 0 given a valid baseline.
+      - name: Recall gate (smoke mode — baseline wiring only)
+        run: python -m bench.recall_gate --baseline bench/baseline_scorecard.json
+
+# --- How a nightly/manual job would enforce a REAL recall floor ----------
+#
+# A separate scheduled workflow (not this one — it spends LLM budget, so it
+# must not run on every PR) would:
+#
+#   1. Run vash against the pinned benchmark target:
+#        vash run --repo <clone of datamodel-code-generator@0.55.0> \
+#            --run-id nightly-$(date +%Y%m%d)
+#   2. Score the run's confirmed findings against ground truth with the
+#      already-tested bench.scorer.score_corpus() (see bench/scorer.py,
+#      bench/ground_truth/datamodel-code-generator.json) and write the
+#      resulting {"cve_recall": ..., "class_recall": ...} dict to
+#      current_scorecard.json.
+#   3. Gate on it with the SAME script as above, this time with --current:
+#        python -m bench.recall_gate \
+#            --baseline bench/baseline_scorecard.json \
+#            --current current_scorecard.json
+#      This exits 1 (fails the job) iff cve_recall regressed below the
+#      committed baseline by more than --tolerance (default 0.0) — that is
+#      the actual recall-regression check; the PR-time smoke step above
+#      only confirms the mechanism is wired up correctly.
