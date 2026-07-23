@@ -23,6 +23,9 @@ class StageContext:
     # Optional operator context — when set, downstream prompts use them.
     live_target: dict | None = None    # {"url": "...", "credentials": {...}}
     scope_notes: str | None = None     # verbatim text appended to user_input
+    # Path to the cached code graph (audit.graph). Set by the taint step (V8)
+    # once built so later graph consumers (V6/F2) can reuse the same cache.
+    graph_cache_path: Path | None = None
 
     def stage(self, name: str) -> StageConfig:
         return self.config.get(name)

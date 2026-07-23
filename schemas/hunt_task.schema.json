@@ -26,8 +26,8 @@
     "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
     "source": {
       "type": "string",
-      "enum": ["recon", "gapfill", "feedback"],
-      "description": "Which stage produced this task."
+      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint"],
+      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8)."
     }
   }
 }

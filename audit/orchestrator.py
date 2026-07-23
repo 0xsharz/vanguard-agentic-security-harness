@@ -10,9 +10,11 @@ from pathlib import Path
 
 from audit import stages
 from audit.config import HarnessConfig
+from audit.graph import GraphQuery, build_or_load
 from audit.runner import QuotaExhaustedError
 from audit.state import StateDB, Task
 from audit.stages._common import StageContext
+from audit.taint import build_taint_tasks
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +190,55 @@ async def _reconcile_inputs(ctx: StageContext, db: StateDB) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Deterministic entry→sink taint chunking (feature V8).
+#
+# After Recon has enumerated every attacker-controllable input (F1), build the
+# code graph and, for each input, walk the real call graph to every dangerous
+# sink — emitting ONE narrowly-scoped Hunt task per reachable (input → sink)
+# path so the Hunter always sees source AND sink together. Fail-open and gated
+# on a trustworthy graph. Mirrors the _reconcile_inputs fail-open pattern.
+# ---------------------------------------------------------------------------
+
+def _add_taint_tasks(ctx: StageContext, db: StateDB) -> None:
+    """Build the code graph and queue deterministic entry→sink taint tasks.
+
+    **Fail-open**: every error is logged and swallowed — taint chunking must
+    NEVER abort a run. **Gated**: a grep-fallback (low-confidence) graph gives
+    unreliable reachability, and a graph with no ``calls`` edges cannot carry a
+    forward path, so both are skipped (this also keeps the e2e stub green — its
+    tiny fixture yields a graph with zero call edges → 0 taint tasks).
+    """
+    try:
+        cache_path = ctx.work_dir("graph") / "graph.json"
+        ctx.graph_cache_path = cache_path
+        doc = build_or_load(ctx.repo_path, cache_path)
+        calls_edges = sum(1 for e in doc.edges if e.kind == "calls")
+        if doc.confidence == "low" or calls_edges == 0:
+            log.info(
+                "[%s] taint: skipped (low-confidence/empty graph: "
+                "confidence=%s, calls_edges=%d)",
+                ctx.run_id, doc.confidence, calls_edges,
+            )
+            return
+        gq = GraphQuery(doc, ctx.repo_path)
+        inputs = db.get_inputs(ctx.run_id)
+        if not inputs:
+            log.info("[%s] taint: skipped (no enumerated inputs)", ctx.run_id)
+            return
+        tasks = build_taint_tasks(gq, inputs, ctx.repo_path)
+        for t in tasks:
+            db.add_task(ctx.run_id, t)
+        log.info(
+            "[%s] taint: %d entry→sink path tasks (inputs=%d, graph=%d calls edges)",
+            ctx.run_id, len(tasks), len(inputs), calls_edges,
+        )
+    except Exception as e:  # fail-open — taint must never abort a run
+        log.warning(
+            "[%s] taint chunking failed (continuing run): %s", ctx.run_id, e
+        )
+
+
 async def run_pipeline(
     *,
     repo_path: Path,
@@ -247,6 +298,11 @@ async def run_pipeline(
         _budget_check("recon")
         recon_kwargs = {} if max_recon_tasks is None else {"max_tasks": max_recon_tasks}
         await stages.run_recon(ctx, db, **recon_kwargs)
+
+        # ---- V8: deterministic entry→sink taint chunking ----
+        # Runs after Recon (inputs enumerated) and before the Hunt loop so the
+        # Hunter picks up the taint tasks. Fail-open + gated (see helper).
+        _add_taint_tasks(ctx, db)
 
         # ---- Stages 2-3-4 loop: Hunt → Validate → Gapfill ----
         for i in range(config.gapfill_iterations + 1):

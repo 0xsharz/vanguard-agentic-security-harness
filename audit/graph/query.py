@@ -218,6 +218,58 @@ class GraphQuery:
                     frontier.append(dst)
         return False
 
+    # ---- taint chunking primitives (feature V8) ----
+
+    def symbol_at_line(self, file: str, line: int) -> str | None:
+        """Public wrapper: resolve a `file:line` location to the enclosing
+        symbol's node id (closest preceding definition). Returns None when no
+        symbol in `file` precedes `line` (e.g. the file isn't in the graph)."""
+        return self._symbol_at_line(file, line)
+
+    def taint_paths(
+        self,
+        entry_ids: Iterable[str],
+        sink_ids: Iterable[str],
+        max_hops: int = 8,
+    ) -> list[tuple[str, list[str]]]:
+        """Multi-source BFS over `calls` edges from every entry to every sink.
+
+        `entry_ids` / `sink_ids` are node ids. Returns
+        ``[(sink_id, [node_id path from some entry to that sink]), ...]`` —
+        one entry per reached sink, carrying the shortest path (nearest entry)
+        because the shared ``visited`` set records a node the first time BFS
+        reaches it. A path always starts at an entry (``path[0]``) and ends at
+        the sink (``path[-1]``); an entry that is itself a sink is not recorded
+        (only callees are), matching the donor.
+
+        Ported from VVAH's ``_bfs_to_sinks``
+        (visa-harness/vvaharness/pipeline/stages/s3_decompose.py), generalized
+        from single-source to multi-source over audit's node-id call graph.
+        Pure/graph-only: expands only ``kind == "calls"`` out-edges and stops
+        expanding a path once ``len(path) > max_hops``.
+        """
+        entry_list = [e for e in entry_ids if e]
+        sink_set = set(sink_ids)
+        if not entry_list or not sink_set:
+            return []
+        out: list[tuple[str, list[str]]] = []
+        visited: set[str] = set(entry_list)
+        frontier: list[tuple[str, list[str]]] = [(e, [e]) for e in entry_list]
+        while frontier:
+            nxt: list[tuple[str, list[str]]] = []
+            for node, path in frontier:
+                for callee, kind in self._out_edges.get(node, ()):
+                    if kind != "calls" or callee in visited:
+                        continue
+                    visited.add(callee)
+                    p = path + [callee]
+                    if callee in sink_set:
+                        out.append((callee, p))
+                    if len(p) <= max_hops:
+                        nxt.append((callee, p))
+            frontier = nxt
+        return out
+
     # ---- internals ----
 
     def _symbol_at_line(self, file: str, line: int) -> str | None:
