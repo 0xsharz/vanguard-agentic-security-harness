@@ -24,6 +24,11 @@ This is intentionally a rule-based replacement for VulnHunter's LLM-as-judge
 structured file/line/CWE fields (see schemas/finding.schema.json,
 report.schema.json), so a fuzzy LLM comparator isn't needed for this shape,
 and a rule-based one is deterministic, free, and CI-friendly.
+
+A second, corpus-faithful matcher (`score_corpus`, plus its `class_of` /
+`finding_matches_cve` building blocks) lives below `score()` — see its
+docstring for when it applies. `score_auto()` dispatches between the two
+based on ground-truth entry shape.
 """
 
 from __future__ import annotations
@@ -196,3 +201,135 @@ def score(
         "missed": missed,
         "matches": matches,
     }
+
+
+# ---------------------------------------------------------------------------
+# Corpus-faithful scorer: real ground truth (class + file_hint), ported from
+# the ai-proofscan project's benchmark/match.py + benchmark/corpus.yaml
+# (/Users/snatarajan14/ai-proofscan/old_one/benchmark/{match.py,corpus.yaml})
+# — same author's prior, adversarially-reviewed matcher + corpus for
+# datamodel-code-generator 0.55.0, mirrored here rather than reinvented.
+# Field names are adapted to this repo's ground-truth convention
+# (`finding_id` in place of match.py's `id`); the matching algorithm itself
+# — CWE->class + case-insensitive file_hint substring, greedy 1:1,
+# in_version exclusion — is unchanged.
+#
+# This path exists because some advisories (see bench/ground_truth/
+# README.md Shape 2) publish no exact file:line for a CVE, only a
+# vulnerability class and one or more file-name hints — too coarse for
+# `score()`'s basename+CWE+line matching above, but still matchable via
+# class + substring. GT entries with `file` and no `file_hint` keep going
+# through `score()` (see `score_auto` below).
+# ---------------------------------------------------------------------------
+
+CWE_CLASS = {
+    "CWE-94": "codegen",
+    "CWE-95": "codegen",
+    "CWE-918": "ssrf",
+    "CWE-22": "traversal",
+    "CWE-23": "traversal",
+    "CWE-73": "traversal",
+    "CWE-200": "infoleak",
+    "CWE-201": "infoleak",
+    "CWE-359": "infoleak",
+    "CWE-502": "deser",
+    "CWE-78": "cmdinj",
+    "CWE-89": "sqli",
+    "CWE-79": "xss",
+    "CWE-611": "xxe",
+    "CWE-1336": "ssti",
+}
+
+
+def class_of(cwe: str, fallback: str = "") -> str:
+    """Map a CWE id (e.g. "CWE-94") to its coarse vulnerability class (e.g.
+    "codegen") via CWE_CLASS. An unmapped CWE falls back to `fallback` if
+    given, else to the CWE id itself (never raises on an unknown CWE)."""
+    return CWE_CLASS.get(cwe, fallback or cwe)
+
+
+def finding_matches_cve(finding: dict, cve: dict) -> bool:
+    """True iff `finding`'s CWE class matches `cve`'s class AND `finding`'s
+    file path contains (case-insensitively) at least one of `cve`'s
+    `file_hint` substrings. Mirrors ai-proofscan's benchmark/match.py
+    `_finding_matches_cve`."""
+    if class_of(finding.get("cwe", "")) != cve.get("class"):
+        return False
+    file_path = (finding.get("file") or "").lower()
+    return any(hint.lower() in file_path for hint in cve.get("file_hint", []))
+
+
+def score_corpus(confirmed: list[dict], expected: list[dict]) -> dict:
+    """Greedily, deterministically match `confirmed` findings to `expected`
+    corpus CVEs by class(cwe) + file_hint substring (see
+    `finding_matches_cve`) — mirrors ai-proofscan's benchmark/match.py
+    `match()`.
+
+    Each `expected` CVE claims at most one `confirmed` finding (first
+    unclaimed match, in `confirmed` order), so a single detection can't
+    double-count against two CVEs that happen to share a class + hint.
+
+    `expected` items flagged `in_version: false` target code verified not to
+    exist in the scanned release — unfindable by construction, so they're
+    excluded from the recall denominator and reported separately (in
+    `excluded`) rather than counted as a miss.
+
+    Returns:
+        {
+          "cve_found": [finding_id, ...],
+          "cve_missed": [finding_id, ...],
+          "cve_recall": float,          # |found| / |in-version expected|, 0.0 if none
+          "class_found": [class, ...],  # sorted, distinct classes among found CVEs
+          "class_recall": float,        # |classes found| / |distinct in-version classes|
+          "extra": [confirmed items claimed by no CVE],
+          "excluded": [finding_id, ...],  # in_version:false CVEs, denominator-excluded
+        }
+    """
+    excluded = [cve["finding_id"] for cve in expected if not cve.get("in_version", True)]
+    expected = [cve for cve in expected if cve.get("in_version", True)]
+
+    used = [False] * len(confirmed)
+    cve_found: list[str] = []
+    cve_missed: list[str] = []
+    class_found: set[str] = set()
+
+    for cve in expected:
+        assigned = None
+        for i, finding in enumerate(confirmed):
+            if used[i]:
+                continue
+            if finding_matches_cve(finding, cve):
+                assigned = i
+                break
+        if assigned is not None:
+            used[assigned] = True
+            cve_found.append(cve["finding_id"])
+            class_found.add(cve["class"])
+        else:
+            cve_missed.append(cve["finding_id"])
+
+    distinct_classes = {cve["class"] for cve in expected}
+    total = len(expected)
+    extra = [finding for i, finding in enumerate(confirmed) if not used[i]]
+
+    return {
+        "cve_found": cve_found,
+        "cve_missed": cve_missed,
+        "cve_recall": (len(cve_found) / total) if total else 0.0,
+        "class_found": sorted(class_found),
+        "class_recall": (len(class_found) / len(distinct_classes)) if distinct_classes else 0.0,
+        "extra": extra,
+        "excluded": excluded,
+    }
+
+
+def score_auto(detected: list[dict], ground_truth: list[dict], *,
+               line_tolerance: int = DEFAULT_LINE_TOLERANCE) -> dict:
+    """Route to the matcher that fits the ground-truth entries' shape: the
+    corpus matcher (`score_corpus`) when any entry carries `file_hint` (the
+    real, source-verified corpus shape — see bench/ground_truth/README.md
+    Shape 2); otherwise the basename+CWE matcher (`score`) for backward
+    compatibility with the original ground-truth shape (Shape 1)."""
+    if any("file_hint" in gt for gt in ground_truth):
+        return score_corpus(detected, ground_truth)
+    return score(detected, ground_truth, line_tolerance=line_tolerance)

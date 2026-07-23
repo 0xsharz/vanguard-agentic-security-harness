@@ -1,26 +1,99 @@
 [
   {
-    "finding_id": "GT-001",
-    "type": "CWE-94",
-    "file": "jsonschema.py",
-    "line": 120,
-    "source_code": "https://github.com/koxudaxi/datamodel-code-generator/tree/0000000000000000000000000000000000000000",
-    "description": "SYNTHETIC SEED — illustrates the ground-truth schema only, not a confirmed CVE. In datamodel-code-generator's JSON Schema parsing path (jsonschema.py), a schema-derived string is used to dynamically construct/evaluate Python code without sanitization, which would allow code injection (CWE-94) if an attacker controls the input schema. Replace the commit hash, exact file/line, and description with a real, source-verified finding before running this benchmark for real."
+    "finding_id": "CVE-2026-54621",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["template", "jinja2", "UnionType"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): template, jinja2, UnionType. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
   },
   {
-    "finding_id": "GT-002",
-    "type": "CWE-200",
-    "file": "http.py",
-    "line": 45,
-    "source_code": "https://github.com/koxudaxi/datamodel-code-generator/tree/0000000000000000000000000000000000000000",
-    "description": "SYNTHETIC SEED — illustrates the ground-truth schema only, not a confirmed CVE. In the HTTP schema-fetch helper (http.py), an error path echoes internal request details (e.g. full URL, headers) back to the caller/log — an information exposure (CWE-200) if reachable across a trust boundary. Replace the commit hash, exact file/line, and description with a real, source-verified finding before running this benchmark for real."
+    "finding_id": "CVE-2026-54653",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["pydantic_base", "dataclass", "msgspec"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): pydantic_base, dataclass, msgspec. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
   },
   {
-    "finding_id": "GT-003",
-    "type": "CWE-22",
-    "file": "reference.py",
-    "line": 78,
-    "source_code": "https://github.com/koxudaxi/datamodel-code-generator/tree/0000000000000000000000000000000000000000",
-    "description": "SYNTHETIC SEED — illustrates the ground-truth schema only, not a confirmed CVE. When resolving a local `$ref` file reference from a JSON/YAML schema, a relative path is joined to a base directory without canonicalization, which would allow `../` sequences to read files outside the intended schema directory (CWE-22, path traversal). Replace the commit hash, exact file/line, and description with a real, source-verified finding before running this benchmark for real."
+    "finding_id": "CVE-2026-54654",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["template", "jinja2", "TypeAlias", "comment"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): template, jinja2, TypeAlias, comment. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-54655",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["jsonschema"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): jsonschema. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-54656",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["validator"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): validator. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-54690",
+    "cwe": "CWE-918",
+    "class": "ssrf",
+    "file_hint": ["http"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Server-side request forgery (CWE-918, class: ssrf). Advisory file hint(s): http. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-54691",
+    "cwe": "CWE-918",
+    "class": "ssrf",
+    "file_hint": ["http", "arguments", "__main__"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Server-side request forgery (CWE-918, class: ssrf). Advisory file hint(s): http, arguments, __main__. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-55415",
+    "cwe": "CWE-94",
+    "class": "codegen",
+    "file_hint": ["imports"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Code generation vulnerability (CWE-94, class: codegen). Advisory file hint(s): imports. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-55389",
+    "cwe": "CWE-22",
+    "class": "traversal",
+    "file_hint": ["jsonschema"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Path traversal vulnerability (CWE-22, class: traversal). Advisory file hint(s): jsonschema. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-55390",
+    "cwe": "CWE-22",
+    "class": "traversal",
+    "file_hint": ["xsd"],
+    "in_version": false,
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Path traversal vulnerability (CWE-22, class: traversal). Advisory file hint(s): xsd. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line. in_version:false — verified 2026-07-23: 0.55.0 ships no XSD parser and zero schemaLocation/XSD references; the vulnerable code was added in a later release. Excluded from the recall denominator (unfindable in this version)."
+  },
+  {
+    "finding_id": "CVE-2026-55391",
+    "cwe": "CWE-918",
+    "class": "ssrf",
+    "file_hint": ["http"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Server-side request forgery (CWE-918, class: ssrf). Advisory file hint(s): http. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
+  },
+  {
+    "finding_id": "CVE-2026-55403",
+    "cwe": "CWE-200",
+    "class": "infoleak",
+    "file_hint": ["http"],
+    "source_code": "https://github.com/koxudaxi/datamodel-code-generator@0.55.0",
+    "description": "Information exposure vulnerability (CWE-200, class: infoleak). Advisory file hint(s): http. REAL, source-verified CVE for datamodel-code-generator 0.55.0, ported from the ai-proofscan project's benchmark corpus; granularity is class+file-hint — the advisory publishes no exact file:line."
   }
 ]

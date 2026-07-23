@@ -219,6 +219,184 @@ def test_scorer_no_line_hint_in_ground_truth_skips_line_check():
 
 
 # ---------------------------------------------------------------------------
+# Corpus-faithful scorer: class(CWE) + file_hint, greedy 1:1, in_version
+# exclusion. Ported from the ai-proofscan project's benchmark/match.py
+# (/Users/snatarajan14/ai-proofscan/old_one/benchmark/{match.py,corpus.yaml})
+# — task 0.3b. `finding_id` replaces match.py's `id` to match this repo's
+# ground-truth convention; the matching algorithm is unchanged.
+# ---------------------------------------------------------------------------
+
+def _cve(finding_id, cwe, cls, file_hint, in_version=True):
+    entry = {
+        "finding_id": finding_id, "cwe": cwe, "class": cls, "file_hint": file_hint,
+        "description": "x" * 30, "source_code": "https://github.com/org/repo@1.0.0",
+    }
+    if not in_version:
+        entry["in_version"] = False
+    return entry
+
+
+def _confirmed(finding_id, file, cwe):
+    return {"finding_id": finding_id, "file": file, "cwe": cwe}
+
+
+def test_class_of_maps_known_cwes_to_class():
+    assert scorer.class_of("CWE-94") == "codegen"
+    assert scorer.class_of("CWE-95") == "codegen"
+    assert scorer.class_of("CWE-918") == "ssrf"
+    assert scorer.class_of("CWE-22") == "traversal"
+    assert scorer.class_of("CWE-23") == "traversal"
+    assert scorer.class_of("CWE-73") == "traversal"
+    assert scorer.class_of("CWE-200") == "infoleak"
+    assert scorer.class_of("CWE-201") == "infoleak"
+    assert scorer.class_of("CWE-359") == "infoleak"
+    assert scorer.class_of("CWE-502") == "deser"
+    assert scorer.class_of("CWE-78") == "cmdinj"
+    assert scorer.class_of("CWE-89") == "sqli"
+    assert scorer.class_of("CWE-79") == "xss"
+    assert scorer.class_of("CWE-611") == "xxe"
+    assert scorer.class_of("CWE-1336") == "ssti"
+
+
+def test_class_of_unmapped_cwe_falls_back_to_itself_or_given_fallback():
+    assert scorer.class_of("CWE-9999") == "CWE-9999"
+    assert scorer.class_of("CWE-9999", fallback="unknown") == "unknown"
+
+
+def test_finding_matches_cve_requires_class_and_hint_substring():
+    finding = _confirmed("f_1", "src/pkg/jsonschema.py", "CWE-94")
+    cve = _cve("CVE-X", "CWE-94", "codegen", ["jsonschema"])
+    assert scorer.finding_matches_cve(finding, cve) is True
+
+
+def test_finding_matches_cve_case_insensitive_hint_match():
+    finding = _confirmed("f_1", "src/pkg/JsonSchema.PY", "CWE-94")
+    cve = _cve("CVE-X", "CWE-94", "codegen", ["JSONSCHEMA"])
+    assert scorer.finding_matches_cve(finding, cve) is True
+
+
+def test_finding_matches_cve_false_when_class_differs_even_if_hint_present():
+    # Same file substring ("jsonschema"), but the finding's CWE maps to a
+    # different class than the CVE's (codegen vs traversal) -> no match.
+    finding = _confirmed("f_1", "src/pkg/jsonschema.py", "CWE-94")  # codegen
+    cve = _cve("CVE-X", "CWE-22", "traversal", ["jsonschema"])
+    assert scorer.finding_matches_cve(finding, cve) is False
+
+
+def test_finding_matches_cve_false_when_no_hint_substring_present():
+    finding = _confirmed("f_1", "src/pkg/unrelated.py", "CWE-94")
+    cve = _cve("CVE-X", "CWE-94", "codegen", ["jsonschema"])
+    assert scorer.finding_matches_cve(finding, cve) is False
+
+
+def test_score_corpus_greedy_one_to_one_no_double_counting():
+    confirmed = [
+        _confirmed("f_1", "pkg/http_a.py", "CWE-918"),
+        _confirmed("f_2", "pkg/http_b.py", "CWE-918"),
+    ]
+    expected = [
+        _cve("CVE-A", "CWE-918", "ssrf", ["http"]),
+        _cve("CVE-B", "CWE-918", "ssrf", ["http"]),
+    ]
+    result = scorer.score_corpus(confirmed, expected)
+    assert sorted(result["cve_found"]) == ["CVE-A", "CVE-B"]
+    assert result["cve_missed"] == []
+    assert result["cve_recall"] == 1.0
+    assert result["extra"] == []
+
+
+def test_score_corpus_one_finding_cannot_satisfy_two_expected_cves():
+    confirmed = [_confirmed("f_1", "pkg/http_a.py", "CWE-918")]
+    expected = [
+        _cve("CVE-A", "CWE-918", "ssrf", ["http"]),
+        _cve("CVE-B", "CWE-918", "ssrf", ["http"]),
+    ]
+    result = scorer.score_corpus(confirmed, expected)
+    assert result["cve_found"] == ["CVE-A"]
+    assert result["cve_missed"] == ["CVE-B"]
+    assert result["cve_recall"] == 0.5
+
+
+def test_score_corpus_in_version_false_excluded_from_denominator():
+    confirmed = []
+    expected = [
+        _cve("CVE-A", "CWE-22", "traversal", ["xsd"], in_version=False),
+        _cve("CVE-B", "CWE-22", "traversal", ["jsonschema"]),
+    ]
+    result = scorer.score_corpus(confirmed, expected)
+    assert result["excluded"] == ["CVE-A"]
+    assert result["cve_missed"] == ["CVE-B"]
+    assert result["cve_recall"] == 0.0  # 0 found / 1 in-version (CVE-A excluded)
+
+
+def test_score_corpus_extra_lists_unclaimed_confirmed_findings():
+    confirmed = [
+        _confirmed("f_1", "pkg/jsonschema.py", "CWE-94"),
+        _confirmed("f_2", "pkg/unrelated.py", "CWE-89"),
+    ]
+    expected = [_cve("CVE-A", "CWE-94", "codegen", ["jsonschema"])]
+    result = scorer.score_corpus(confirmed, expected)
+    assert result["cve_found"] == ["CVE-A"]
+    assert [f["finding_id"] for f in result["extra"]] == ["f_2"]
+
+
+def test_score_auto_routes_to_corpus_matcher_when_file_hint_present():
+    confirmed = [_confirmed("f_1", "pkg/jsonschema.py", "CWE-94")]
+    expected = [_cve("CVE-A", "CWE-94", "codegen", ["jsonschema"])]
+    result = scorer.score_auto(confirmed, expected)
+    assert "cve_recall" in result
+    assert "recall" not in result
+
+
+def test_score_auto_routes_to_existing_matcher_when_no_file_hint():
+    detected = [_detected("f_1", "jsonschema.py", 118, 122, "code-injection", cwe="CWE-94")]
+    gt = [_gt("GT-001", "jsonschema.py", 120, "CWE-94")]
+    result = scorer.score_auto(detected, gt)
+    assert "recall" in result
+    assert "cve_recall" not in result
+    assert result["tp"] == 1
+
+
+def test_known_baseline_datamodel_code_generator_recall_is_6_of_11():
+    """The known Phase-0 baseline (.superpowers/sdd/progress.md task 0.3):
+    datamodel-code-generator's REAL, source-verified 12-CVE corpus
+    (bench/ground_truth/datamodel-code-generator.json, ported from
+    ai-proofscan's benchmark corpus) has exactly one in_version:false CVE
+    (CVE-2026-55390 — 0.55.0 ships no XSD parser), leaving 11 in the recall
+    denominator. This `confirmed` findings list is deliberately built so
+    each detection's file path + CWE is unambiguous for exactly one target
+    CVE (no other in-version CVE shares both its class and a hint
+    substring), satisfying exactly 6 of the 11 and leaving the other 5
+    genuinely missed — not an artifact of greedy assignment order.
+    """
+    path = AUDIT_REPO_ROOT / "bench" / "ground_truth" / "datamodel-code-generator.json"
+    expected = json.loads(path.read_text())
+    assert len(expected) == 12
+
+    confirmed = [
+        _confirmed("f_1", "datamodel_code_generator/parser/uniontype_codegen.py", "CWE-94"),   # -> CVE-2026-54621
+        _confirmed("f_2", "datamodel_code_generator/model/pydantic_base_model.py", "CWE-94"),  # -> CVE-2026-54653
+        _confirmed("f_3", "datamodel_code_generator/parser/jsonschema.py", "CWE-94"),          # -> CVE-2026-54655
+        _confirmed("f_4", "datamodel_code_generator/parser/validator_utils.py", "CWE-94"),     # -> CVE-2026-54656
+        _confirmed("f_5", "datamodel_code_generator/imports.py", "CWE-94"),                    # -> CVE-2026-55415
+        _confirmed("f_6", "datamodel_code_generator/http/http_client.py", "CWE-918"),          # -> CVE-2026-54690
+    ]
+
+    result = scorer.score_corpus(confirmed, expected)
+
+    assert result["excluded"] == ["CVE-2026-55390"]
+    assert sorted(result["cve_found"]) == sorted([
+        "CVE-2026-54621", "CVE-2026-54653", "CVE-2026-54655",
+        "CVE-2026-54656", "CVE-2026-55415", "CVE-2026-54690",
+    ])
+    assert sorted(result["cve_missed"]) == sorted([
+        "CVE-2026-54654", "CVE-2026-54691", "CVE-2026-55389",
+        "CVE-2026-55391", "CVE-2026-55403",
+    ])
+    assert result["cve_recall"] == pytest.approx(6 / 11)
+
+
+# ---------------------------------------------------------------------------
 # parse_results.py
 # ---------------------------------------------------------------------------
 
@@ -393,16 +571,26 @@ def test_parse_source_url_and_target_dir_name():
 # ---------------------------------------------------------------------------
 
 def test_seed_ground_truth_file_matches_expected_shape():
+    """Task 0.3b: datamodel-code-generator.json now ships the REAL,
+    source-verified 12-CVE corpus (ported from ai-proofscan's
+    benchmark/corpus.yaml) in the class+file_hint shape — advisories for
+    this target publish no exact file:line, only a vulnerability class and
+    file-name hint(s), matched via bench.scorer.score_corpus/score_auto."""
     path = AUDIT_REPO_ROOT / "bench" / "ground_truth" / "datamodel-code-generator.json"
     entries = json.loads(path.read_text())
-    assert len(entries) >= 3
+    assert len(entries) == 12
+    known_classes = set(scorer.CWE_CLASS.values())
     for entry in entries:
-        assert entry["finding_id"]
-        assert entry["type"].startswith("CWE-")
-        assert entry["file"]
-        assert isinstance(entry["line"], int)
+        assert entry["finding_id"].startswith("CVE-")
+        assert entry["cwe"].startswith("CWE-")
+        assert entry["class"] in known_classes
+        assert isinstance(entry["file_hint"], list) and entry["file_hint"]
         assert entry["source_code"].startswith("https://github.com/")
-        assert "SYNTHETIC SEED" in entry["description"]
+        assert "real" in entry["description"].lower()
+        assert "synthetic" not in entry["description"].lower()
+
+    excluded = [e["finding_id"] for e in entries if e.get("in_version") is False]
+    assert excluded == ["CVE-2026-55390"]
 
 
 # ---------------------------------------------------------------------------
