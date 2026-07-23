@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "rich>=13.7",
+    "graphifyy",
 ]
 
 [project.optional-dependencies]
