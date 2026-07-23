@@ -29,6 +29,7 @@ from vash.orchestrator import CostExceeded, run_pipeline
 from vash.redact import redact_json
 from vash.stages._common import StageContext
 from vash.stages.remediate import run_remediate
+from vash.stages.revalidate import DEFAULT_MIN_CONFIDENCE, run_revalidate
 from vash.state import StateDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -304,6 +305,77 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
             f"patched={c['patched']} guidance_only={c['guidance_only']} "
             f"cannot_fix={c['cannot_fix']} (of {summary['total']})"
         )
+        console.print(f"artifacts: {summary['out_dir']}")
+    except Exception as e:
+        console.print(f"[red]failed[/red] {type(e).__name__}: {e}")
+        raise
+    finally:
+        db.close()
+
+
+@main.command("validate")
+@click.option("--run-id", required=True,
+              help="Independently re-verify a prior run's confirmed findings.")
+@click.option("--repo", "repo", default=None,
+              type=click.Path(exists=True, file_okay=False),
+              help="Target repo (default: the path recorded for the run).")
+@click.option("--model", default=None,
+              help="Override the model used for the second opinion (default: "
+                   "config/stages.yaml's revalidate stage model — deliberately "
+                   "a different tier than the scan's own Validate stage).")
+@click.option("--min-confidence", "min_confidence", default=DEFAULT_MIN_CONFIDENCE,
+              type=int,
+              help="Confidence gate (0-10): a 'validated' verdict below this "
+                   f"is downgraded to needs_review (default: {DEFAULT_MIN_CONFIDENCE}).")
+@click.option("--out", "out_dir", default=None, type=click.Path(),
+              help="Output dir (default: results/<run-id>/revalidation).")
+@click.option("--allow-api-key", is_flag=True, default=False,
+              help="Honor ANTHROPIC_API_KEY for metered Anthropic billing "
+                   "(also via AUDIT_ALLOW_API_KEY=1).")
+def validate(run_id: str, repo: str | None, model: str | None,
+            min_confidence: int, out_dir: str | None, allow_api_key: bool) -> None:
+    """Independently re-verify a prior run's confirmed findings — a fresh,
+    read-only second opinion (VVAH s6 stance) that actively tries to reach
+    the OPPOSITE verdict before agreeing with the scan. Decoupled + opt-in —
+    NOT part of `vash run`.
+
+    Reads the existing run's DB, NEVER mutates it, and writes
+    revalidation.json / REVALIDATION.md (redacted) with a per-finding verdict
+    and any DISAGREEMENTS with the scan — the overturned false positives the
+    second opinion caught.
+    """
+    allow = _allow_api_key_from_env_or_flag(allow_api_key)
+    try:
+        configure_auth(allow_api_key=allow)
+    except AuthError as e:
+        console.print(f"[red]auth error:[/red] {e}")
+        sys.exit(2)
+
+    db = StateDB(DB_PATH)
+    try:
+        run = db.get_run(run_id)
+        if run is None:
+            console.print(f"[red]unknown run_id {run_id!r}[/red]")
+            sys.exit(1)
+        repo_path = Path(repo).resolve() if repo else Path(run["repo_path"])
+        out = Path(out_dir) if out_dir else (RESULTS_ROOT / run_id / "revalidation")
+        config = load_config()
+        ctx = StageContext(run_id=run_id, repo_path=repo_path, config=config)
+
+        summary = asyncio.run(run_revalidate(
+            ctx, db, out_dir=out, model=model, min_confidence=min_confidence,
+        ))
+        c = summary["counts"]
+        console.print(
+            f"[green]revalidation done[/green] run_id={run_id} — "
+            f"validated={c['validated']} failed(OVERTURNED)={c['failed']} "
+            f"needs_review={c['needs_review']} (of {summary['total']})"
+        )
+        if summary["overturned_finding_ids"]:
+            console.print(
+                "[yellow]OVERTURNED[/yellow] (false positives caught): "
+                + ", ".join(summary["overturned_finding_ids"])
+            )
         console.print(f"artifacts: {summary['out_dir']}")
     except Exception as e:
         console.print(f"[red]failed[/red] {type(e).__name__}: {e}")

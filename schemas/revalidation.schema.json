@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RevalidationVerdict",
+  "description": "An independent second-opinion re-verification of ONE finding a prior scan already confirmed. Emitted by `vash validate` (Phase 6) — a fresh, read-only agent session that actively pursues the OPPOSITE of the scan's verdict (VVAH s6 second-opinion stance) before agreeing with it. Cannot emit new findings.",
+  "type": "object",
+  "required": ["finding_id", "verdict", "confidence", "agrees_with_scan", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": { "type": "string" },
+    "verdict": {
+      "type": "string",
+      "enum": ["validated", "failed", "needs_review"],
+      "description": "validated: independently re-confirmed. failed: actively disproved (an overturned false positive). needs_review: could not be decisively settled statically."
+    },
+    "confidence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "0-10. 8-10 means you actively searched for the opposite verdict and could not support it (VVAH s6). A validated verdict below the pipeline's min_confidence gate is downgraded to needs_review."
+    },
+    "agrees_with_scan": {
+      "type": "boolean",
+      "description": "Your best-effort self-assessment of whether this verdict matches the scan's original verdict. The pipeline recomputes this deterministically afterward from the final verdict — it is not trusted blindly — but still reason honestly here."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Must engage with the evidence you independently found (call sites checked, defenses read, which gate applied) — not restate the finding's description."
+    },
+    "alternative_explanation": {
+      "type": "string",
+      "description": "Mandatory in spirit even when verdict = validated: the rival hypothesis you actively pursued and ruled out (if failed, this IS your false-positive case; if validated, the false-positive theory that did not hold up; if needs_review, what remains unresolved)."
+    }
+  }
+}

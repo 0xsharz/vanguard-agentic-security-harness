@@ -57,6 +57,20 @@ stages:
     concurrency: 4
     tools: [Read, Grep, Glob]
     repair_attempts: 2
+  revalidate:
+    # Decoupled, opt-in `vash validate` (NOT part of the scan loop; Phase 6).
+    # A fresh, independent second opinion on findings the scan already
+    # confirmed (VVAH s6 second-opinion stance) — deliberately a DIFFERENT
+    # model tier than the scan's own `validate` stage (opus above) so the
+    # "deliberate disagreement" pattern this file opens with extends across
+    # the scan/second-opinion boundary, not just within the scan itself.
+    # Read-only tools ONLY (no Bash, no Write): the agent reads code and
+    # emits a verdict as JSON; it NEVER executes the target (static-first).
+    # `--model` on the CLI overrides this default.
+    model: claude-sonnet-4-6
+    concurrency: 4
+    tools: [Read, Grep, Glob]
+    repair_attempts: 2
 
 # Bounded loops to prevent runaway cost
 loops:

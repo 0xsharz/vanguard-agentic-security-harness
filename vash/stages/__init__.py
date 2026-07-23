@@ -10,8 +10,10 @@ from vash.stages.trace import run_trace
 from vash.stages.feedback import run_feedback
 from vash.stages.chain import run_chain
 from vash.stages.report import run_report
-# Decoupled, opt-in command (NOT part of the scan loop) — see vash.cli remediate.
+# Decoupled, opt-in commands (NOT part of the scan loop) — see vash.cli
+# remediate / validate.
 from vash.stages.remediate import run_remediate
+from vash.stages.revalidate import run_revalidate
 
 __all__ = [
     "run_recon",
@@ -24,4 +26,5 @@ __all__ = [
     "run_chain",
     "run_report",
     "run_remediate",
+    "run_revalidate",
 ]
