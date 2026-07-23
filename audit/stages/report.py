@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from audit.redact import redact_json
 from audit.runner import AgentRunError, TransientAgentError, run_agent
 from audit.state import StateDB
 from audit.stages._common import StageContext
@@ -45,7 +46,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
             "findings": [],
         }
         _attach_input_inventory(db, ctx.run_id, empty)
-        out_path.write_text(json.dumps(empty, indent=2))
+        out_path.write_text(json.dumps(redact_json(empty), indent=2))
         log.info("[%s] report: no reachable findings — wrote empty report to %s",
                  ctx.run_id, out_path)
         return out_path
@@ -71,7 +72,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
                   ctx.run_id, e)
         fallback = _build_fallback_report(ctx, db, reachable, target, chains)
         _attach_input_inventory(db, ctx.run_id, fallback)
-        out_path.write_text(json.dumps(fallback, indent=2))
+        out_path.write_text(json.dumps(redact_json(fallback), indent=2))
         return out_path
 
     db.record_cost(ctx.run_id, "report", None, result.raw_result_message)
@@ -81,7 +82,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # run state (the ledger), not the agent's imagination — attach it here so
     # it is authoritative and present on every report, agent-authored or not.
     _attach_input_inventory(db, ctx.run_id, payload)
-    out_path.write_text(json.dumps(payload, indent=2))
+    out_path.write_text(json.dumps(redact_json(payload), indent=2))
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
              len(payload.get("input_inventory", [])), out_path)

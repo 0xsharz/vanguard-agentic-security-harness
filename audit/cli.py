@@ -26,6 +26,7 @@ def _allow_api_key_from_env_or_flag(flag: bool) -> bool:
     return os.environ.get("AUDIT_ALLOW_API_KEY", "").strip() not in ("", "0", "false", "False")
 from audit.config import load_config
 from audit.orchestrator import CostExceeded, run_pipeline
+from audit.redact import redact_json
 from audit.state import StateDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -221,7 +222,12 @@ def report(run_id: str, fmt: str) -> None:
         if not report_path.exists():
             console.print(f"[red]no report at {report_path}[/red]")
             sys.exit(1)
-        payload = json.loads(report_path.read_text())
+        # Belt-and-suspenders: audit/stages/report.py already redacts before
+        # writing report.json, but this CLI is itself an egress point (it
+        # prints findings/evidence to stdout for a human/CI to read), so
+        # redact again here too. redact_json is idempotent, so re-redacting
+        # an already-redacted report is a no-op.
+        payload = redact_json(json.loads(report_path.read_text()))
         if fmt == "json":
             click.echo(json.dumps(payload, indent=2))
         else:
