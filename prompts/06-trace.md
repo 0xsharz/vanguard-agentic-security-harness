@@ -77,6 +77,91 @@ A single JSON object matching `schemas/trace.schema.json`. No prose.
 5. `confidence` reflects how confident you are in the verdict. Low
    confidence with `reachable: true` requires explicit caveats in
    `rationale`.
+6. When `reachable = true`, ALSO produce the `exploitability` object
+   described below. When `reachable = false`, omit `exploitability`
+   entirely — there is nothing to score.
+
+# Exploitability analysis (when `reachable = true`)
+
+You are now producing a static exploitability analysis for this finding.
+This is still read-only work — do NOT build, run, install, or execute
+the target, and do NOT reach the network. Reason entirely from the
+source you already read while tracing the path above.
+
+## Sections — score each 0/1/2
+
+Score and justify each of the following with a quoted `file:line` where
+possible:
+
+### vector (0/1/2)
+How does attacker-controlled data reach the application at all? 0 = no
+plausible external vector, 1 = vector exists but needs a specific
+precondition, 2 = directly reachable from an unauthenticated, standard
+request.
+
+### reachability_score (0/1/2)
+How reliably does the traced path execute given real inputs? 0 = path is
+gated behind conditions you cannot show are satisfiable, 1 = reachable
+under specific conditions, 2 = reachable on the ordinary/common code path.
+
+### sanitizer_bypass (0/1/2)
+How hard is it to defeat whatever protection exists on the path? 0 = a real
+sanitizer fully blocks this, 1 = a partial/weak sanitizer can plausibly be
+bypassed, 2 = no meaningful sanitizer exists on the winning path.
+
+### impact (0/1/2)
+What can the attacker achieve at the sink? 0 = low/no impact (e.g. a crash
+or minor info leak), 1 = moderate impact (limited data exposure or
+tampering), 2 = high impact (code execution, full data exfiltration/
+tampering, auth bypass).
+
+### chaining (0/1/2)
+Does this finding require other bugs/preconditions to matter, or does it
+stand alone / compound with other reachable issues? 0 = only matters if
+chained with another unproven bug, 1 = stands alone but its impact is
+amplified by plausible chaining, 2 = stands alone with no chaining needed
+for full impact.
+
+## severity_assessment — precondition model
+
+Count the preconditions required (auth state, config flags, prior state,
+attacker-controlled values that must land just so) and apply:
+
+- **0 preconditions + unauthenticated access → HIGH**
+- **1-2 preconditions + requires authentication → MEDIUM**
+- **3+ preconditions + local-only access → LOW**
+
+Threat-model alignment (this finding matches a scenario the threat model
+calls out as a priority) may raise the severity by ONE step — never two,
+and never above HIGH. If re-reading now shows this is actually a false
+positive, set `severity_assessment` to **NOT-A-BUG** (this does not flip
+`reachable`, which was already decided above).
+
+**`severity_assessment` is advisory context only.** It is stored and
+surfaced in the report but never overrides the finding's CVSS-derived
+`severity` (from Validate/V4), which remains authoritative.
+
+## needs_poc
+
+Set `needs_poc = true` when static reasoning alone cannot settle whether
+this is actually exploitable — e.g. reachability depends on runtime
+configuration, request framing, feature flags, or timing you cannot
+determine by reading source. Set it `false` when your source reading is
+sufficient to settle the verdict on its own. This is the project's
+Tier-3 honesty rule: such findings are `confirmed_static` + `needs_poc`,
+never asserted certain.
+
+## attack_input and narrative
+
+- `attack_input`: the concrete attacker-controlled value/payload that
+  would trigger the sink — a STATIC sketch only. Never build, run,
+  install, or send it; do NOT reach the network to test it.
+- `narrative`: what the attacker does, in order, to realize this —
+  grounded in the file:line evidence you already gathered.
+
+Populate `exploitability` with all of `vector`, `reachability_score`,
+`sanitizer_bypass`, `impact`, `chaining`, `severity_assessment`,
+`needs_poc`, `attack_input`, and `narrative` whenever `reachable = true`.
 
 # Constraints
 
