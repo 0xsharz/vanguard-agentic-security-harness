@@ -137,6 +137,22 @@
           "disposition_evidence": { "type": ["string", "null"] }
         }
       }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Consolidated coverage disclosure (4.7). Merges the F1 input ledger, the 4.3 run_summary tasks/findings breakdowns, and the F6 catch-all sweep/drop counts into one object so an operator sees, in one place, what was and wasn't covered. Injected from the run state by report.py — optional and permissive (additionalProperties allowed) so it never blocks report emission or a future field addition.",
+      "properties": {
+        "inputs_enumerated": { "type": "integer", "minimum": 0 },
+        "inputs_covered": { "type": "integer", "minimum": 0 },
+        "inputs_uncovered": { "type": "integer", "minimum": 0 },
+        "tasks_by_source": { "type": "object", "description": "Task count keyed by source (recon, catchall, reconcile, ...)." },
+        "findings_by_status": { "type": "object", "description": "Finding count keyed by validation_status (confirmed, false_positive, null=unvalidated, ...)." },
+        "source_files": { "type": "integer", "minimum": 0, "description": "Eligible source files seen by the F6 catch-all sweep." },
+        "covered_files": { "type": "integer", "minimum": 0, "description": "Of source_files, how many were already targeted by some task before the sweep." },
+        "catchall_tasks": { "type": "integer", "minimum": 0, "description": "Catch-all sweep tasks queued." },
+        "catchall_dropped": { "type": "integer", "minimum": 0, "description": "Eligible files the sweep could NOT queue because build_catchall_tasks's max_tasks cap was hit — coverage is INCOMPLETE whenever this is > 0." },
+        "coverage_complete": { "type": "boolean", "description": "False when catchall_dropped > 0 or any enumerated input never reached a disposition. Never imply full coverage when this is false." }
+      }
     }
   }
 }

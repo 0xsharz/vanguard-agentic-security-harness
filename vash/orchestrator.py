@@ -379,6 +379,14 @@ def _add_catchall_tasks(ctx: StageContext, db: StateDB) -> None:
         tasks, dropped = build_catchall_tasks(all_src, covered, graph=gq)
         for t in tasks:
             db.add_task(ctx.run_id, t)
+        # 4.7: persist the honesty numbers so report.py can disclose them —
+        # previously `dropped` was only logged (see warning below).
+        db.set_coverage(ctx.run_id, {
+            "source_files": len(all_src),
+            "covered_files": len(covered),
+            "catchall_tasks": len(tasks),
+            "catchall_dropped": dropped,
+        })
         log.info(
             "[%s] catchall: %d sweep tasks (%d source, %d covered, %d dropped by cap)",
             ctx.run_id, len(tasks), len(all_src), len(covered), dropped,

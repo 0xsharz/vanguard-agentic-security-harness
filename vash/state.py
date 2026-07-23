@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS chains (
     FOREIGN KEY (run_id) REFERENCES runs(run_id)
 );
 
+CREATE TABLE IF NOT EXISTS coverage (
+    run_id TEXT PRIMARY KEY,
+    raw_json TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+);
+
 CREATE TABLE IF NOT EXISTS dedupe_groups (
     group_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
@@ -516,6 +522,28 @@ class StateDB:
     def get_chain_analysis(self, run_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT raw_json FROM chains WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return json.loads(row["raw_json"]) if row else None
+
+    # ---------- coverage (4.7: coverage honesty) ----------
+
+    def set_coverage(self, run_id: str, payload: dict) -> None:
+        """Persist the run-level coverage record (one per run): the F6
+        catch-all sweep/drop counts computed by
+        `orchestrator._add_catchall_tasks` (source_files/covered_files/
+        catchall_tasks/catchall_dropped). report.py merges this with input
+        dispositions (F1) and run_summary (4.3) into one consolidated
+        `coverage` object so an operator sees, in one place, what was and
+        wasn't covered."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO coverage (run_id, raw_json) VALUES (?, ?)",
+            (run_id, json.dumps(payload)),
+        )
+        self._conn.commit()
+
+    def get_coverage(self, run_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT raw_json FROM coverage WHERE run_id = ?", (run_id,)
         ).fetchone()
         return json.loads(row["raw_json"]) if row else None
 

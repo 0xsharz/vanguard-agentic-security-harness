@@ -46,6 +46,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
             "findings": [],
         }
         _attach_input_inventory(db, ctx.run_id, empty)
+        _attach_coverage(db, ctx.run_id, empty)
         out_path.write_text(json.dumps(redact_json(empty), indent=2))
         log.info("[%s] report: no reachable findings — wrote empty report to %s",
                  ctx.run_id, out_path)
@@ -72,6 +73,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
                   ctx.run_id, e)
         fallback = _build_fallback_report(ctx, db, reachable, target, chains)
         _attach_input_inventory(db, ctx.run_id, fallback)
+        _attach_coverage(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(redact_json(fallback), indent=2))
         return out_path
 
@@ -82,6 +84,10 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # run state (the ledger), not the agent's imagination — attach it here so
     # it is authoritative and present on every report, agent-authored or not.
     _attach_input_inventory(db, ctx.run_id, payload)
+    # 4.7: consolidated coverage disclosure — same treatment as the input
+    # inventory above: sourced from run state, injected post-hoc, never
+    # left to the agent to (mis)represent.
+    _attach_coverage(db, ctx.run_id, payload)
     out_path.write_text(json.dumps(redact_json(payload), indent=2))
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
@@ -107,6 +113,41 @@ def _attach_input_inventory(db: StateDB, run_id: str, payload: dict) -> None:
         for inp in db.get_inputs(run_id)
     ]
     payload["input_inventory"] = inventory
+
+
+def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach a consolidated `coverage` object (4.7) to a report payload —
+    reuses existing data rather than re-running any analysis:
+      - inputs enumerated/covered/uncovered from the F1 completeness ledger
+        (`db.get_inputs`);
+      - tasks_by_source / findings_by_status from the 4.3 `db.run_summary`;
+      - source_files/covered_files/catchall_tasks/catchall_dropped from the
+        F6 catch-all sweep record `_add_catchall_tasks` persists.
+    `coverage_complete` is False whenever the catch-all cap dropped files OR
+    any enumerated input never reached a disposition — an operator must never
+    be told coverage is complete when it isn't.
+
+    Fail-soft: coverage is purely additive disclosure. Any failure here is
+    logged and swallowed so it can never break report emission.
+    """
+    try:
+        inputs = db.get_inputs(run_id)
+        summary = db.run_summary(run_id)
+        coverage = {
+            "inputs_enumerated": len(inputs),
+            "inputs_covered": sum(1 for i in inputs if i.get("disposition") == "covered"),
+            "inputs_uncovered": sum(1 for i in inputs if i.get("disposition") == "uncovered"),
+            "tasks_by_source": summary.get("tasks", {}).get("by_source", {}),
+            "findings_by_status": summary.get("findings", {}).get("by_status", {}),
+            **(db.get_coverage(run_id) or {}),
+        }
+        coverage["coverage_complete"] = (
+            coverage.get("catchall_dropped", 0) == 0
+            and all(i.get("disposition") for i in inputs)
+        )
+        payload["coverage"] = coverage
+    except Exception as e:  # fail-soft — coverage must never break the report
+        log.warning("[%s] coverage attach failed (continuing): %s", run_id, e)
 
 
 def _group_members_excluding(db: StateDB, run_id: str, group_id: str,

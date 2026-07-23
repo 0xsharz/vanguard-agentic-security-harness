@@ -95,6 +95,24 @@ state (the authoritative ledger) after you emit your JSON, so omit `input_invent
 from your output entirely — focus only on the `findings`. Any value you write for
 it will be overwritten by the reconciled ledger.
 
+# Coverage disclosure (4.7)
+
+The report also carries a `coverage` object injected from run state after you
+emit your JSON: inputs enumerated/covered/uncovered, tasks queued by source,
+findings by validation status, and how many eligible files the terminal
+catch-all sweep swept versus dropped because its cap was hit. **Do NOT
+synthesize this object yourself** — omit `coverage` from your output entirely,
+the same way you omit `input_inventory`; any value you write for it is
+overwritten.
+
+If the injected `coverage.coverage_complete` is `false`, or its
+`catchall_dropped` count is greater than 0, the report is describing a run
+that did **not** sweep every eligible file. In that case your prose (the
+`description` fields, any summary language you write) MUST NOT imply the scan
+was exhaustive — state plainly that coverage is INCOMPLETE (N files not
+swept) rather than let silence read as "everything was checked." Never claim
+or imply full coverage when the cap dropped files.
+
 # Constraints
 
 - Only canonical-and-reachable findings appear. If the trace says
