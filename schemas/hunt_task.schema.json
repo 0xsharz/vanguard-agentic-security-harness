@@ -26,8 +26,12 @@
     "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
     "source": {
       "type": "string",
-      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint", "sink_backward"],
-      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8); 'sink_backward' = orphan-sink backward audit — a dangerous sink no enumerated input reaches, hunted backward through its callers (F3)."
+      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint", "sink_backward", "specialist"],
+      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8); 'sink_backward' = orphan-sink backward audit — a dangerous sink no enumerated input reaches, hunted backward through its callers (F3); 'specialist' = gated repo-wide specialist sweep (V12) — see 'specialist'."
+    },
+    "specialist": {
+      "type": "string",
+      "description": "Set when source='specialist': the SPECIALIST_HINTS key (audit.lang.hints) naming which repo-wide lens to hunt with — crypto|logic-bug|access-control|deserialization|batch-etl|iac. Flows into Hunt's hints_for(specialist=...) call so the researcher gets the specialist lens instead of the generic language hints."
     }
   }
 }

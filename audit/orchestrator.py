@@ -12,6 +12,7 @@ from audit import stages
 from audit.config import HarnessConfig
 from audit.graph import GraphQuery, build_or_load
 from audit.runner import QuotaExhaustedError
+from audit.specialists import active_specialists, build_specialist_tasks
 from audit.state import StateDB, Task
 from audit.stages._common import StageContext
 from audit.taint import build_sink_backward_tasks, build_taint_tasks
@@ -283,6 +284,57 @@ def _add_sink_backward_tasks(ctx: StageContext, db: StateDB) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Gated repo-wide specialist sweeps (feature V12).
+#
+# V8/F3 chunk deterministically around a single (input, sink) pair. The recall
+# gap is cross-cutting bug classes with no per-file signature: weak crypto,
+# auth/IDOR logic, unsafe deserialization, batch/ETL handling, IaC
+# misconfiguration. This step queues ONE repo-wide Hunt task per specialist
+# whose surface actually exists in this repo (see `audit.specialists` for the
+# ported VVAH gate) — never for a specialist certain to yield only false
+# positives — and relies on the specialist research lens already wired into
+# Hunt (`hints_for(specialist=...)`, V9) via `task.raw_json["specialist"]`.
+#
+# Unlike taint/sink-backward, this is graph-INDEPENDENT: the gates are static
+# regex/recon-shape checks, not call-graph reachability, so a missing or
+# low-confidence graph must not skip it — only the source-file list matters,
+# which falls back to a bounded repo walk when no graph is available.
+# ---------------------------------------------------------------------------
+
+def _add_specialist_tasks(ctx: StageContext, db: StateDB) -> None:
+    """Queue gated repo-wide specialist Hunt tasks.
+
+    **Fail-open**: every error is logged and swallowed — specialist sweeps
+    must NEVER abort a run. **Not confidence-gated**: specialists are static
+    regex/recon-shape checks independent of graph reachability, so (unlike
+    `_add_taint_tasks`/`_add_sink_backward_tasks`) a missing/low-confidence
+    graph does not skip this step — it only changes how the source-file list
+    is gathered.
+    """
+    try:
+        recon = db.get_recon_output(ctx.run_id) or {}
+        inputs = db.get_inputs(ctx.run_id)
+        gq = ctx.graph()
+        # source files: prefer the graph's python files; else a bounded repo walk.
+        if gq is not None:
+            source_files = [f for f in gq._by_file if f.endswith(".py")]
+        else:
+            source_files = [str(p.relative_to(ctx.repo_path)) for p in
+                            list(ctx.repo_path.rglob("*.py"))[:2000]]
+        active = active_specialists(recon, inputs, ctx.repo_path, source_files)
+        tasks = build_specialist_tasks(active, source_files, ctx.repo_path)
+        for t in tasks:
+            db.add_task(ctx.run_id, t)
+        log.info(
+            "[%s] specialists: %s -> %d tasks", ctx.run_id, ",".join(active), len(tasks)
+        )
+    except Exception as e:  # fail-open — specialists must never abort a run
+        log.warning(
+            "[%s] specialists failed (continuing run): %s", ctx.run_id, e
+        )
+
+
 async def run_pipeline(
     *,
     repo_path: Path,
@@ -354,6 +406,12 @@ async def run_pipeline(
         # (orphans = all_sinks − forward_reached). Reuses ctx.graph() (no
         # rebuild). Fail-open + gated (see helper).
         _add_sink_backward_tasks(ctx, db)
+
+        # ---- V12: gated repo-wide specialist sweeps ----
+        # crypto / logic-bug / access-control / deserialization / batch-etl /
+        # iac — only for specialists whose surface actually exists (gated).
+        # Graph-independent (regex/recon-shape gated); fail-open (see helper).
+        _add_specialist_tasks(ctx, db)
 
         # ---- Stages 2-3-4 loop: Hunt → Validate → Gapfill ----
         for i in range(config.gapfill_iterations + 1):

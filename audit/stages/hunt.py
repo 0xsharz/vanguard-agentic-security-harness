@@ -62,7 +62,7 @@ async def run_hunt(
             scratch = ctx.work_dir("hunt", task.task_id)
             subsystem_hint = task.target_files[0] if task.target_files else None
             languages = detect_languages(task.target_files)
-            language_hints = hints_for(languages, specialist=None, code=None)
+            language_hints = hints_for(languages, specialist=task.raw_json.get("specialist"), code=None)
             user_input = {
                 "task_id": task.task_id,
                 "attack_class": task.attack_class,
