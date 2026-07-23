@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from audit import stages
+from audit.catchall import build_catchall_tasks
 from audit.config import HarnessConfig
 from audit.graph import GraphQuery, build_or_load
 from audit.runner import QuotaExhaustedError
@@ -335,6 +336,60 @@ def _add_specialist_tasks(ctx: StageContext, db: StateDB) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Terminal whole-repo coverage sweep (feature F6) — the completeness net.
+#
+# V8 hunts forward taint paths, F3 hunts orphan sinks, V12 hunts gated
+# specialist surfaces — but a file with NO input/sink/specialist signal is
+# still unhunted. This is the LAST synthesis step before the Hunt loop: once
+# every targeted task above has been queued, emit LOW-priority (5) catch-all
+# Hunt tasks for every eligible source file none of them covered, so coverage
+# is provable ("every eligible file got >=1 hunt"). Precision is protected
+# downstream by Validate; these run last by priority.
+#
+# Graph-independent (like specialists): the eligibility filter is a static
+# name/extension/dir-part check, not call-graph reachability, so a missing or
+# low-confidence graph must not skip this step.
+# ---------------------------------------------------------------------------
+
+def _add_catchall_tasks(ctx: StageContext, db: StateDB) -> None:
+    """Queue LOW-priority catch-all Hunt tasks for every eligible source file
+    not covered by any task queued so far in this run.
+
+    **Fail-open**: every error is logged and swallowed — the coverage sweep
+    must NEVER abort a run. **Not confidence-gated**: graph-independent, like
+    `_add_specialist_tasks` (see module note above). **Coverage honesty**: if
+    `build_catchall_tasks`'s `max_tasks` cap drops eligible files, that count
+    is LOGGED as a warning here — never dropped silently.
+    """
+    try:
+        gq = ctx.graph()
+        if gq is not None:
+            all_src = [f for f in gq._by_file if f.endswith(".py")]
+        else:
+            all_src = [str(p.relative_to(ctx.repo_path)) for p in
+                       list(ctx.repo_path.rglob("*.py"))[:5000]]
+        covered: set[str] = set()
+        for t in db.get_all_tasks(ctx.run_id):
+            covered.update(t.target_files)
+        tasks, dropped = build_catchall_tasks(all_src, covered)
+        for t in tasks:
+            db.add_task(ctx.run_id, t)
+        log.info(
+            "[%s] catchall: %d sweep tasks (%d source, %d covered, %d dropped by cap)",
+            ctx.run_id, len(tasks), len(all_src), len(covered), dropped,
+        )
+        if dropped:
+            log.warning(
+                "[%s] catchall: %d eligible files NOT swept (cap hit) — coverage incomplete",
+                ctx.run_id, dropped,
+            )
+    except Exception as e:  # fail-open — catchall must never abort a run
+        log.warning(
+            "[%s] catchall failed (continuing run): %s", ctx.run_id, e
+        )
+
+
 async def run_pipeline(
     *,
     repo_path: Path,
@@ -412,6 +467,13 @@ async def run_pipeline(
         # iac — only for specialists whose surface actually exists (gated).
         # Graph-independent (regex/recon-shape gated); fail-open (see helper).
         _add_specialist_tasks(ctx, db)
+
+        # ---- F6: terminal whole-repo coverage sweep ----
+        # LAST synthesis step: emits LOW-priority catch-all tasks for every
+        # eligible source file not covered by any recon/taint/sink-backward/
+        # specialist task queued above. Graph-independent; fail-open (see
+        # helper).
+        _add_catchall_tasks(ctx, db)
 
         # ---- Stages 2-3-4 loop: Hunt → Validate → Gapfill ----
         for i in range(config.gapfill_iterations + 1):
