@@ -1,0 +1,39 @@
+VASH (Vanguard Agentic Security Harness)
+Copyright 2026 the VASH authors.
+
+This product is derived from and reuses portions of three prior works. It is a
+fork of evilsocket/audit, with capability and production grafts adapted from
+Capital One VulnHunter and Visa VVAH. Portions that carry an Apache-2.0 header
+in-file are licensed under Apache-2.0; all other original VASH code is under the
+MIT License (see LICENSE). Full third-party license texts are in licenses/ and
+the per-component attribution is in THIRD_PARTY_LICENSES.md.
+
+--------------------------------------------------------------------------------
+evilsocket/audit  —  MIT License
+    The base engine VASH forks: the 8-stage pipeline (recon→hunt→validate→
+    gapfill→dedupe→trace→feedback→report), SQLite state, the Claude Agent SDK
+    runner, cost budgeting, and CLI. VASH renames the package/CLI to `vash` and
+    extends the pipeline in place.
+    License: licenses/audit-MIT.txt
+
+Capital One VulnHunter  —  Apache License 2.0  (Copyright Capital One)
+    Reused / adapted (not verbatim): the completeness input-inventory recon
+    pattern, the sink-backward audit modality, the per-class disprove-gates and
+    downgrade-discipline used in Validate, the benchmark miss-analysis harness,
+    and the graphify-based AST call-graph approach.
+    License: licenses/VulnHunter-Apache-2.0.txt
+
+Visa VVAH (visa-vulnerability-agentic-harness)  —  Apache License 2.0
+    Copyright 2026 VISA, Inc.
+    Reused VERBATIM (retain their Apache-2.0 headers): the CVSS 3.1 calculator
+    (vash/cvss.py), the per-language security-hints knowledge base
+    (vash/lang/hints.py), the repo-kind OWASP/CWE baselines (vash/baselines.py),
+    and the secret/PII/PAN redaction module (vash/redact.py).
+    Adapted (not verbatim): deterministic entry→sink taint-path chunking, gated
+    specialist passes, catch-all coverage eligibility, and exploit-chain
+    construction.
+    License: licenses/VVAH-Apache-2.0.txt
+
+Changes were made to all reused portions to adapt them to VASH's Python,
+static-first pipeline. This NOTICE file is provided per Apache-2.0 section 4(d).
+--------------------------------------------------------------------------------
