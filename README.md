@@ -53,7 +53,7 @@ two new decoupled commands (`vash remediate`, `vash validate`).
 | # | Stage        | Default model | Purpose |
 |---|--------------|---------------|---------|
 | 1 | Recon        | Opus 4.7   | Map the repo; emit narrowly-scoped Hunt tasks + the completeness input inventory (F1) |
-| 2 | Hunt         | Sonnet 4.6 | One attack class per agent; compile/run PoCs |
+| 2 | Hunt         | Sonnet 4.6 | One attack class per agent; static-only — proves by source→sink argument, no execution |
 | 3 | Validate     | Opus 4.7   | Adversarial re-read; tries to **disprove** via static gates (F5) — different model from Hunt |
 | 4 | Gapfill      | Sonnet 4.6 | Re-queue under-covered areas |
 | 5 | Dedupe       | Sonnet 4.6 | Cluster findings by root cause |
@@ -442,11 +442,13 @@ Hunt cooperatively aborts rather than running 30 more tasks past the cap.
 
 ## Live-target reproduction (optional)
 
-If the target has a running deployment, point the agents at it. Hunt now
-**reproduces** each finding against the live service instead of compiling
-a local PoC, Validate **rejects** findings that don't reproduce, and Trace
-**confirms** reachability with real HTTP round-trips. The static path
-remains available — these flags are opt-in.
+If the target has a running deployment, point the agents at it. Trace
+**confirms** reachability with real HTTP round-trips against the live
+service. Hunt and Validate are purely static and never reproduce anything
+themselves — Hunt proves each finding by source→sink argument and Validate
+re-reads statically; when `live_target` reaches either of them it is
+informational context only. The static path remains available regardless
+— these flags, and the live confirmation they enable in Trace, are opt-in.
 
 ```bash
 vash run --repo /path/to/target --run-id live \
@@ -459,8 +461,9 @@ vash run --repo /path/to/target --run-id live \
 Rules the agents follow when `--target-url` is set:
 - Network egress is restricted to that host + `127.0.0.1`. No other external
   hosts.
-- A finding that doesn't reproduce against the live target is dropped or
-  rejected (depending on stage) — "no fabrication".
+- A finding Trace can't confirm reachable — including via live HTTP
+  round-trip when `--target-url` is set — is marked `reachable: false`,
+  never fabricated ("no fabrication").
 - Credentials flow into every relevant stage's user_input as a dict.
 
 ## Scope notes (optional)
@@ -536,7 +539,8 @@ vash/           Python package (CLI entry point: vash.cli:main)
   stages/            one module per stage, incl. remediate.py / revalidate.py
 bench/          benchmark harness: corpus clone, scorer, recall_gate,
                  self-tuning miss-analysis (3.ST) — see CI & recall gate below
-work/           per-Hunt-task scratch dirs (sandbox for PoC compile/run)
+work/           per-Hunt-task scratch dirs (agent cwd; static-only — no
+                 PoC compile/run happens there anymore)
 results/        results/<run-id>/{report,remediation,revalidation}/ + run_summary.json
 state.db        SQLite (gitignored)
 licenses/       full upstream license texts (audit MIT; VulnHunter + VVAH Apache-2.0)
@@ -544,11 +548,21 @@ licenses/       full upstream license texts (audit MIT; VulnHunter + VVAH Apache
 
 ## Safety
 
-Hunt agents have Bash and run inside per-task scratch dirs
-(`work/<run-id>/hunt/...`). They are **not** sandboxed at the OS level. Run
-`vash run` inside a disposable VM or container when you don't trust the
-target source — a target with malicious build scripts could otherwise
-execute on your host during PoC compilation.
+The scan (`vash run`) is genuinely static. Recon's Bash is scoped to
+read-only git history inspection only (`git log`/`git show`/`git
+blame`); Hunt has no Bash at all and proves findings by source→sink
+argument instead of writing and running a PoC — its per-task scratch
+directory (`work/<run-id>/hunt/...`) is just its working directory now,
+not an execution sandbox. Trace keeps Bash, but scoped to read-only
+static inspection (`grep`/`find`/`wc`/AST parsing/`ctags`); the only
+execution-adjacent action anywhere in the scan is Trace's optional HTTP
+round-trip to a live deployment, and only when you explicitly opt in
+with `--target-url` (see [Live-target
+reproduction](#live-target-reproduction-optional)) — no stage ever
+compiles or runs the target's own source code. You do not need a
+disposable VM or container to protect against the scan executing target
+build scripts — it can't; a target's `Makefile`, `package.json` scripts,
+or similar are read as text, never invoked.
 
 Every agent — every scan stage, and the decoupled `remediate`/`validate`
 commands too — reads everything you `--add-dir`, including any `.env` or
@@ -566,13 +580,15 @@ whenever the target repo contains real secrets.
 
 ### Static-first guarantee — `remediate` / `validate`, and the sandbox gate
 
-The two paragraphs above are about `vash run` (Hunt/Trace do intentionally
-compile/run PoCs, as described). The **decoupled** `vash remediate` and
-`vash validate` commands are different: both are read-only by config (no
-`Bash`, no `Write` — see the `remediate` / `revalidate` stage comments in
-`config/stages.yaml`) and never execute anything from the target. A patch
-is a unified diff produced by an agent *reading* code; it is written to disk
-and never applied or run.
+The scan (`vash run`) itself is static-first, per [Safety](#safety) above —
+no stage compiles or runs the target's own source, and the only
+execution-adjacent action anywhere in it is Trace's opt-in live-target HTTP
+round-trip. The **decoupled** `vash remediate` and `vash validate` commands
+go further still: both are read-only by config (no `Bash`, no `Write` — see
+the `remediate` / `revalidate` stage comments in `config/stages.yaml`) and
+have no live-target exception either — they never touch the network and
+never execute anything from the target. A patch is a unified diff produced
+by an agent *reading* code; it is written to disk and never applied or run.
 
 The only execution ever contemplated on that decoupled path is
 `remediate --verify` — optionally running the target's **own** test suite to

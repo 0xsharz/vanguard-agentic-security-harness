@@ -9,43 +9,43 @@ defaults:
 
 stages:
   recon:
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     concurrency: 1
-    tools: [Read, Grep, Glob, Bash]
+    tools: [Read, Grep, Glob, Bash]  # Bash = read-only git history mining ONLY
     max_turns: 60                # recon can be long
     repair_attempts: 2           # critical one-shot; spend a second repair turn if needed
   hunt:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 50
-    tools: [Read, Grep, Glob, Bash]
+    tools: [Read, Grep, Glob]     # no Bash: static-first — Hunt never executes/compiles target code
   validate:
-    model: claude-opus-4-7        # different from hunt — deliberate disagreement
+    model: claude-opus-4-8        # different from hunt — deliberate disagreement
     concurrency: 10
     tools: [Read, Grep, Glob]     # no Bash: pure analysis
   gapfill:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 1
     tools: [Read, Grep, Glob]
     repair_attempts: 2
   dedupe:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 1
     tools: [Read]
   trace:
-    model: claude-opus-4-7        # most critical stage
+    model: claude-opus-4-8        # most critical stage
     concurrency: 10
     tools: [Read, Grep, Glob, Bash]
   feedback:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 1
-    tools: [Read, Grep, Glob]
+    tools: [Read, Grep, Glob]     # no Bash: the sweep only greps
     repair_attempts: 2
   chain:
-    model: claude-sonnet-4-6        # report/grade tier — one synthesis pass
+    model: claude-sonnet-5        # report/grade tier — one synthesis pass
     concurrency: 1
     tools: [Read, Grep, Glob]       # read-only; never executes target code
   report:
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 1
     tools: [Read]
   remediate:
@@ -53,7 +53,7 @@ stages:
     # generation is high-stakes -> strong model. Read-only tools ONLY: the
     # agent reads code and emits a unified diff + a security test as JSON; it
     # NEVER executes the target (static-first). No Bash, no Write.
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     concurrency: 4
     tools: [Read, Grep, Glob]
     repair_attempts: 2
@@ -67,7 +67,7 @@ stages:
     # Read-only tools ONLY (no Bash, no Write): the agent reads code and
     # emits a verdict as JSON; it NEVER executes the target (static-first).
     # `--model` on the CLI overrides this default.
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     concurrency: 4
     tools: [Read, Grep, Glob]
     repair_attempts: 2

@@ -35,11 +35,11 @@ you considered.
 this finding's attack class or code region out of scope, **reject the
 finding** with `rationale` citing the scope rule.
 
-If `live_target` is present, you have read-only Bash with `curl` /
-`python3` available against that URL (and only that URL — no other
-external network). Use it to *try to make the bug reproduce*; a finding
-that doesn't reproduce against the live target is a strong rejection
-signal.
+Validate never receives Bash — it is pure static re-analysis, even when
+`live_target` is present in input. Treat `live_target` as informational
+context only; do not claim to have reproduced (or failed to reproduce)
+anything against it. Dynamic reachability confirmation, including any
+live-target HTTP round-trip, is the Trace stage's job, not Validate's.
 
 # Graph context (optional)
 
@@ -68,9 +68,8 @@ absent.
 
 # Tools available
 
-Read, Grep, Glob. Bash is available **only** when `live_target` is
-present in input, and only for HTTP traffic to that host. Pure-analysis
-mode (no Bash) otherwise.
+Read, Grep, Glob. No Bash, unconditionally — Validate is pure static
+analysis regardless of whether `live_target` is present in input.
 
 # Output
 
@@ -109,20 +108,14 @@ severity — score the metrics honestly rather than guessing a label. Leave
    take pre-parsed structured input that breaks the attack class.
 5. Construct the **strongest** benign explanation. Then weigh it
    against the offensive read.
-6. **If `live_target` is in input**, attempt to reproduce the finding
-   against it before deciding. A confirmed-static + reproduced-live
-   verdict is the strongest signal; confirmed-static + failed-live
-   should be downgraded to `rejected` unless the reason for non-
-   reproduction is clearly an environmental difference.
-7. Decide:
-   - **rejected**: the benign explanation is clearly correct, OR the
-     bug fails to reproduce against the live target.
+6. Decide:
+   - **rejected**: the benign explanation is clearly correct.
    - **confirmed**: the offensive read survives every counterargument
-     you can construct AND (when applicable) reproduces against the
-     live target.
+     you can construct.
    - **needs_more_info**: a decisive disambiguation requires runtime
      observation you can't perform, dynamic config, or repo-external
-     info. Suggest the test that would resolve it in `suggested_test`.
+     info. Suggest the test that would resolve it in `suggested_test`
+     — e.g. a live-target reproduction for the Trace stage to attempt.
 
 # Additional disprove rules
 

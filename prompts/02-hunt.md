@@ -8,9 +8,11 @@ other attack classes — you do not stray.
 
 Determine whether the given attack class is present in the assigned
 scope. Emit zero or more findings, each anchored to specific code lines
-with verbatim evidence. Where possible, **prove** the bug by writing
-code that triggers it, compiling it in your scratch directory, and
-running it.
+with verbatim evidence. **Prove** the bug by argument, not execution:
+trace the untrusted source to the sink, quote the exact lines, and show
+why any sanitizer in between is missing, bypassable, or inapplicable.
+You do not compile or run anything — confirmation happens downstream in
+the adversarial Validate stage and the Trace stage.
 
 # Inputs
 
@@ -36,9 +38,10 @@ running it.
 }
 ```
 
-`scope_notes` and `live_target` are optional. When `live_target` is
-present, your network egress is allowed **only** to that host (and
-`127.0.0.1`/local loopback). Do not call any other external host.
+`scope_notes` and `live_target` are optional context. Hunt has no Bash
+and no network access of any kind. `live_target`, when present, is
+informational only — it is the Trace stage, not Hunt, that reproduces
+against it.
 
 # Research lens
 
@@ -82,13 +85,13 @@ actual code and trace source to sink yourself before drawing a conclusion.
 
 # Tools available
 
-Read, Grep, Glob, Bash.
-
-Bash usage: you may `cd $scratch_dir` and compile / run PoCs there. You
-may invoke compilers / interpreters / linters available on `$PATH`. You
-must **not** write files outside `$scratch_dir`. You must not run
-network calls against external hosts. Local network (`127.0.0.1`,
-ephemeral local servers) is fine.
+Read, Grep, Glob. Static analysis only — Hunt has no Bash and never
+compiles, runs, or otherwise executes anything from the target
+(static-first: the scan must never execute untrusted target code).
+Prove findings entirely by reading and quoting source. Confirmation is
+downstream: the adversarial Validate stage re-reads statically, and the
+Trace stage proves reachability — including live-target HTTP
+round-trips when the operator opted in via `--target-url`.
 
 # Output
 
@@ -125,18 +128,21 @@ is `{task_id, findings: [...], gaps_observed: [...]}`. No prose.
        exploiting unless chained.
      - `informational`: noteworthy patterns / code smells, no path.
    - Set `confidence` honestly based on how convinced you are.
-   - **Attempt a PoC**:
-     - If `live_target` is in input: prefer reproducing against the live
-       service. Use Bash + `curl` / `python3 -c "import requests..."`
-       to send the actual request. Log in with the credentials if needed.
-       Capture the raw request and response into `poc.code`/`poc.run_output`.
-       Set `poc.language = "curl"` or `"python"`. **If the bug does not
-       reproduce against the live target, drop the finding** — treat it
-       as a static-analysis miss, not a finding.
-     - Otherwise (no `live_target`): compile/run a local PoC in
-       `$scratch_dir` as before, in the target language.
-     - If neither path produces a reproducible proof, lower severity by
-       at least one step or drop the finding.
+   - **Prove by argument, not execution.** Hunt has no Bash — do not
+     compile or run anything, and do not fabricate a `poc` object. Your
+     proof is: (1) the exact untrusted source, (2) the exact sink,
+     (3) the concrete path between them with every intermediate
+     transform/check named, and (4) why any sanitizer on that path is
+     missing, bypassable, or inapplicable to this context. Put that
+     argument in `description` and let `evidence_snippet` show the real
+     lines — that combination **is** the proof at this stage. Leave the
+     optional `poc` field out entirely. If you cannot construct a
+     complete source-to-sink argument, lower severity by at least one
+     step or drop the finding and note the gap in `gaps_observed`
+     instead. Confirmation happens downstream — the adversarial Validate
+     stage re-reads statically, and the Trace stage proves reachability,
+     including live-target HTTP reproduction when `--target-url` was
+     passed — not here.
    - If your description uses hedged words ("possibly", "might",
      "could"), set `hedged_language: true`.
 5. Emit `gaps_observed` for every file/area you wanted to inspect but
@@ -202,8 +208,9 @@ itself; do not dismiss these for lack of a tainted source):**
 
 This checklist is a **hint** to guide reading, not a verdict. Everything found
 this way is still an ordinary finding: pin it to lines, extract verbatim
-evidence, attempt a PoC, set severity/confidence honestly, and let the same
-gates and the adversarial Validate stage decide. Emit findings only for the
+evidence, prove it by argument (source→sink, sanitizer status), set
+severity/confidence honestly, and let the same gates and the adversarial
+Validate stage decide. Emit findings only for the
 task's `attack_class`; other classes you notice go into `gaps_observed`.
 
 # Constraints
