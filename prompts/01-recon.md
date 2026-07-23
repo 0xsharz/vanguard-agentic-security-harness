@@ -25,7 +25,8 @@ A JSON object:
   "live_target": {
     "url": "http://server.local:8888",
     "credentials": {"email": "...", "password": "..."}
-  }
+  },
+  "baseline": "<optional checklist text — see Baseline checklist section below>"
 }
 ```
 
@@ -34,6 +35,22 @@ A JSON object:
 provided, the downstream Hunt agents will be able to send actual
 requests at this URL — bias your task queue toward attack classes that
 benefit from runtime confirmation.
+
+# Baseline checklist
+
+`baseline` is also **optional**. When present and non-empty, it is a
+minimum-coverage checklist for this repo's kind (web-api / mobile / native /
+iac / library) — the OWASP/CWE categories that commonly apply to that shape
+of system, derived from a static classifier (frameworks in the manifest,
+API-contract artefacts, source languages, IaC files, etc.). Treat it as a
+floor, not a ceiling: rank each listed item against THIS codebase and emit
+a task covering it ONLY if a matching surface actually exists here (don't
+emit an SSRF task if nothing in the repo makes outbound requests); omit
+items with no matching surface — silently, no need to explain the
+omission. This exists so your task queue isn't limited to whatever
+git-history mining and manual reading happen to surface. If `baseline` is
+absent or empty, proceed exactly as you would otherwise — it is
+supplementary signal, never a replacement for your own analysis.
 
 The repo is mounted at `repo_path` and you can read it with Read, Grep,
 Glob, and Bash (use Bash only for read-only inspection: `git log --oneline

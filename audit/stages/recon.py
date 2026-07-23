@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from audit.baselines import classify_and_baseline
 from audit.runner import run_agent
 from audit.state import StateDB
 from audit.stages._common import StageContext
@@ -21,10 +22,22 @@ async def run_recon(ctx: StageContext, db: StateDB, max_tasks: int = DEFAULT_MAX
     sc = ctx.stage("recon")
     log.info("[%s] recon: model=%s max_tasks=%d", ctx.run_id, sc.model, max_tasks)
 
+    # V10: repo-kind -> OWASP/CWE minimum-baseline checklist. Best-effort —
+    # a classification error must never block Recon, so it degrades to an
+    # empty baseline rather than propagating.
+    try:
+        baseline_kinds, baseline_text = classify_and_baseline(ctx.repo_path)
+    except Exception as e:
+        log.warning("[%s] recon: baseline classification failed, continuing "
+                    "with an empty baseline: %s", ctx.run_id, e)
+        baseline_kinds, baseline_text = set(), ""
+    log.info("[%s] recon: baseline repo_kind=%s", ctx.run_id, sorted(baseline_kinds) or "-")
+
     result = await run_agent(
         stage="recon",
         prompt_file=ctx.prompt("01-recon"),
         user_input={"repo_path": str(ctx.repo_path), "max_tasks": max_tasks,
+                    "baseline": baseline_text,
                     **ctx.extras()},
         schema_file=ctx.schema("recon_output"),
         allowed_tools=sc.tools,
