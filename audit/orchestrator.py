@@ -372,7 +372,10 @@ def _add_catchall_tasks(ctx: StageContext, db: StateDB) -> None:
         covered: set[str] = set()
         for t in db.get_all_tasks(ctx.run_id):
             covered.update(t.target_files)
-        tasks, dropped = build_catchall_tasks(all_src, covered)
+        # F2: pass the (possibly None) graph through so build_catchall_tasks
+        # can group by call-graph connectivity instead of pure directory
+        # adjacency; gq is already memoized above, no extra load.
+        tasks, dropped = build_catchall_tasks(all_src, covered, graph=gq)
         for t in tasks:
             db.add_task(ctx.run_id, t)
         log.info(
