@@ -41,6 +41,10 @@
           "hedged_language": {
             "type": "boolean",
             "description": "Set true if the description uses 'might'/'could'/'possibly' — flags noise for triage."
+          },
+          "needs_poc": {
+            "type": "boolean",
+            "description": "Set true when execution wasn't available (execution_available=false, static-only host) so this finding was reasoned statically (source->sink argument) instead of PoC-confirmed. Never set when a PoC was attempted — a non-reproducing finding is dropped or downgraded, not flagged. A later sandboxed run should attempt to prove it."
           }
         }
       }

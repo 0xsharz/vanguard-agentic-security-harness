@@ -34,6 +34,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
+from vash import sandbox
 from vash.json_utils import extract_json, validate_schema
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,21 @@ async def run_agent(
     produced parseable output that doesn't match the schema even after
     repair turns.
     """
+    # R1 — the central sandbox gate (the safety invariant): no stage may
+    # execute anything on a non-sandboxed host, regardless of what
+    # config/stages.yaml grants it. This is what makes Hunt's restored PoC
+    # execution (and any other stage's Bash — e.g. Recon's git mining,
+    # Trace's static inspection + optional live HTTP round-trip) safe: it
+    # only ever runs inside an active isolation sandbox. Computed once,
+    # here, before the retry loop below ever builds a ClaudeAgentOptions.
+    if "Bash" in allowed_tools and not sandbox.is_sandboxed():
+        allowed_tools = [t for t in allowed_tools if t != "Bash"]
+        log.info(
+            "[runner] stage=%s: Bash stripped — no active sandbox; static-only mode "
+            "(run inside a container or set VASH_SANDBOX=1 to enable PoC execution)",
+            stage,
+        )
+
     last_exc: RuntimeError | None = None
     for attempt in range(transient_retries + 1):
         try:

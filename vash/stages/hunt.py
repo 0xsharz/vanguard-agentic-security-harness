@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
+from vash import sandbox
 from vash.graph_context import neighbors_for_files
 from vash.lang.hints import detect_languages, hints_for
 from vash.runner import (
@@ -73,6 +74,11 @@ async def run_hunt(
                 "scratch_dir": str(scratch),
                 "recon_summary": truncated_recon_summary(recon_summary, subsystem_hint),
                 "language_hints": language_hints,
+                # R1: tells the prompt which mode it's in (attempt-and-drop
+                # vs. reason-statically-and-flag) — the runner's sandbox
+                # gate (vash/runner.py) is what actually enforces the tool
+                # set; this just lets Hunt itself know which branch to take.
+                "execution_available": sandbox.is_sandboxed(),
                 **ctx.extras(),
             }
             gq = ctx.graph()

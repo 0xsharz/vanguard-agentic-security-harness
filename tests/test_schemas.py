@@ -194,6 +194,29 @@ def test_report_rejects_needs_poc_and_exploitability_note() -> None:
     assert errors, "expected validation error: needs_poc/exploitability_note were removed"
 
 
+# ---- R1: Hunt PoC execution restored, gated by the sandbox ----------------
+
+
+def test_finding_accepts_needs_poc_flag() -> None:
+    # Static-fallback (no sandbox): Hunt sets this instead of dropping a
+    # finding for lack of a PoC.
+    ok = {**FINDING_OK,
+          "findings": [{**FINDING_OK["findings"][0], "needs_poc": True}]}
+    errors = validate_schema(ok, SCHEMAS / "finding.schema.json")
+    assert errors == [], errors
+
+
+def test_finding_accepts_poc_object() -> None:
+    # Sandboxed: Hunt's restored PoC execution attaches this when
+    # execution_available and the PoC reproduces (audit's original shape).
+    poc = {"language": "python", "code": "import requests",
+           "run_output": "200 OK", "succeeded": True}
+    ok = {**FINDING_OK,
+          "findings": [{**FINDING_OK["findings"][0], "poc": poc}]}
+    errors = validate_schema(ok, SCHEMAS / "finding.schema.json")
+    assert errors == [], errors
+
+
 def test_report_still_accepts_chains_v11() -> None:
     # V11's top-level `chains` array must survive the F5 removal untouched.
     report_with_chains = {

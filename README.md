@@ -53,7 +53,7 @@ two new decoupled commands (`vash remediate`, `vash validate`).
 | # | Stage        | Default model | Purpose |
 |---|--------------|---------------|---------|
 | 1 | Recon        | Opus 4.7   | Map the repo; emit narrowly-scoped Hunt tasks + the completeness input inventory (F1) |
-| 2 | Hunt         | Sonnet 4.6 | One attack class per agent; static-only — proves by source→sink argument, no execution |
+| 2 | Hunt         | Sonnet 4.6 | One attack class per agent; hunts statically, then executes a PoC to confirm — only inside a sandbox (source→sink argument + `needs_poc` on a bare host) |
 | 3 | Validate     | Opus 4.7   | Adversarial re-read; tries to **disprove** via static gates (F5) — different model from Hunt |
 | 4 | Gapfill      | Sonnet 4.6 | Re-queue under-covered areas |
 | 5 | Dedupe       | Sonnet 4.6 | Cluster findings by root cause |
@@ -442,13 +442,16 @@ Hunt cooperatively aborts rather than running 30 more tasks past the cap.
 
 ## Live-target reproduction (optional)
 
-If the target has a running deployment, point the agents at it. Trace
-**confirms** reachability with real HTTP round-trips against the live
-service. Hunt and Validate are purely static and never reproduce anything
-themselves — Hunt proves each finding by source→sink argument and Validate
-re-reads statically; when `live_target` reaches either of them it is
-informational context only. The static path remains available regardless
-— these flags, and the live confirmation they enable in Trace, are opt-in.
+If the target has a running deployment, point the agents at it. **Inside a
+sandbox** (see [Safety](#safety)), Hunt prefers reproducing each finding
+against the live service over compiling a local PoC, and Trace **confirms**
+reachability with real HTTP round-trips against it. Validate stays purely
+static and never reproduces anything itself — it re-reads statically;
+`live_target` reaching Validate is informational context only. **On a bare
+host**, Hunt and Trace both lose Bash (per Safety) so neither can reach the
+network either — `live_target` becomes informational-only for them too, and
+Hunt falls back to a static source→sink argument with `needs_poc: true`. The
+static path remains available regardless — these flags are opt-in either way.
 
 ```bash
 vash run --repo /path/to/target --run-id live \
@@ -461,9 +464,10 @@ vash run --repo /path/to/target --run-id live \
 Rules the agents follow when `--target-url` is set:
 - Network egress is restricted to that host + `127.0.0.1`. No other external
   hosts.
-- A finding Trace can't confirm reachable — including via live HTTP
-  round-trip when `--target-url` is set — is marked `reachable: false`,
-  never fabricated ("no fabrication").
+- Inside a sandbox: a finding Hunt or Trace can't reproduce/confirm against
+  the live target — including via live HTTP round-trip — is dropped, lowered
+  in severity, or (Trace) marked `reachable: false`; never fabricated ("no
+  fabrication").
 - Credentials flow into every relevant stage's user_input as a dict.
 
 ## Scope notes (optional)
@@ -521,7 +525,8 @@ config/         stages.yaml (model/concurrency/tools per stage) +
                  remediation_policy.yaml (the `vash remediate` CWE hard-gate).
 vash/           Python package (CLI entry point: vash.cli:main)
   auth.py            OAuth/API-key/gateway resolution + env scrubbing
-  sandbox.py         execution-sandbox gate for `remediate --verify` (4.1)
+  sandbox.py         execution-sandbox gate — backs both the scan's runner
+                     gate (R1) and `remediate --verify` (4.1)
   redact.py          secret/PII/PAN redaction before egress (VVAH port)
   cvss.py            CVSS 3.1 base-score calculator (VVAH port, V4)
   baselines.py       repo-kind -> OWASP/CWE baselines (VVAH port, V10)
@@ -539,8 +544,9 @@ vash/           Python package (CLI entry point: vash.cli:main)
   stages/            one module per stage, incl. remediate.py / revalidate.py
 bench/          benchmark harness: corpus clone, scorer, recall_gate,
                  self-tuning miss-analysis (3.ST) — see CI & recall gate below
-work/           per-Hunt-task scratch dirs (agent cwd; static-only — no
-                 PoC compile/run happens there anymore)
+work/           per-Hunt-task scratch dirs — a real PoC-execution sandbox
+                 again inside a container (VASH_SANDBOX=1 / /.dockerenv);
+                 just the agent's static-mode cwd on a bare host
 results/        results/<run-id>/{report,remediation,revalidation}/ + run_summary.json
 state.db        SQLite (gitignored)
 licenses/       full upstream license texts (audit MIT; VulnHunter + VVAH Apache-2.0)
@@ -548,21 +554,42 @@ licenses/       full upstream license texts (audit MIT; VulnHunter + VVAH Apache
 
 ## Safety
 
-The scan (`vash run`) is genuinely static. Recon's Bash is scoped to
-read-only git history inspection only (`git log`/`git show`/`git
-blame`); Hunt has no Bash at all and proves findings by source→sink
-argument instead of writing and running a PoC — its per-task scratch
-directory (`work/<run-id>/hunt/...`) is just its working directory now,
-not an execution sandbox. Trace keeps Bash, but scoped to read-only
-static inspection (`grep`/`find`/`wc`/AST parsing/`ctags`); the only
-execution-adjacent action anywhere in the scan is Trace's optional HTTP
-round-trip to a live deployment, and only when you explicitly opt in
-with `--target-url` (see [Live-target
-reproduction](#live-target-reproduction-optional)) — no stage ever
-compiles or runs the target's own source code. You do not need a
-disposable VM or container to protect against the scan executing target
-build scripts — it can't; a target's `Makefile`, `package.json` scripts,
-or similar are read as text, never invoked.
+`vash run` is **hybrid, not purely static**: broad static hunting drives
+recall, and executing a real PoC per candidate finding is what drives false
+positives to zero — but that execution only ever happens inside an active
+isolation sandbox. `runner.run_agent()` (`vash/runner.py`) is the single,
+stage-agnostic gate every agent call passes through: immediately before
+launching any agent it strips `Bash` out of that stage's allowed tools
+unless `vash.sandbox.is_sandboxed()` is true (a container — `/.dockerenv`
+present — or `VASH_SANDBOX=1`), regardless of what `config/stages.yaml`
+grants. This is enforced centrally, once, for every stage that ever
+requests Bash — Recon's read-only git-history mining, Hunt's PoC execution,
+Trace's static inspection + optional live HTTP round-trip — not left to
+per-prompt discipline.
+
+- **Inside a sandbox**: Recon can mine `git log`/`git show`/`git blame`;
+  Hunt runs audit's original PoC method — for each plausible finding it
+  prefers reproducing against `live_target` (Bash + `curl` / `python3 -c
+  "import requests..."`) when one was passed, else compiles and runs a
+  local PoC in its per-task scratch dir (`work/<run-id>/hunt/...`), and
+  **drops or downgrades any finding that doesn't reproduce**; Trace keeps
+  its read-only static inspection (`grep`/`find`/`wc`/AST parsing/`ctags`)
+  plus the opt-in live HTTP round-trip to a deployment passed via
+  `--target-url` (see [Live-target
+  reproduction](#live-target-reproduction-optional)).
+- **On a bare host (no sandbox — the default)**: every one of those stages
+  loses Bash and the run auto-degrades to fully static, automatically and
+  silently (a log line notes it, the run doesn't fail). Hunt can't execute
+  anything, so instead of dropping a finding for lack of proof it reasons
+  statically (source→sink argument, exactly as before this change) and
+  sets `needs_poc: true` so a later sandboxed run can confirm it. You do
+  not need a disposable VM or container just to be safe by default — on a
+  bare host the scan literally cannot compile or run a target's own source,
+  or execute its build scripts; a target's `Makefile`, `package.json`
+  scripts, or similar are read as text, never invoked. Use a container
+  (with `VASH_SANDBOX=1`, or run inside one that already sets `/.dockerenv`)
+  when you want the execution-confirmed, zero-false-positive behavior
+  instead.
 
 Every agent — every scan stage, and the decoupled `remediate`/`validate`
 commands too — reads everything you `--add-dir`, including any `.env` or
@@ -580,26 +607,35 @@ whenever the target repo contains real secrets.
 
 ### Static-first guarantee — `remediate` / `validate`, and the sandbox gate
 
-The scan (`vash run`) itself is static-first, per [Safety](#safety) above —
-no stage compiles or runs the target's own source, and the only
-execution-adjacent action anywhere in it is Trace's opt-in live-target HTTP
-round-trip. The **decoupled** `vash remediate` and `vash validate` commands
-go further still: both are read-only by config (no `Bash`, no `Write` — see
-the `remediate` / `revalidate` stage comments in `config/stages.yaml`) and
-have no live-target exception either — they never touch the network and
-never execute anything from the target. A patch is a unified diff produced
-by an agent *reading* code; it is written to disk and never applied or run.
+One `vash/sandbox.py` module backs every execution gate in VASH, the scan
+and the decoupled commands alike — same two underlying signals
+(`VASH_SANDBOX=1` or a `/.dockerenv` marker), two different call sites with
+different failure modes to match how each path is used:
+
+- **The scan (`vash run`)** calls `sandbox.is_sandboxed()` — see
+  [Safety](#safety) above. With no sandbox this is a silent,
+  automatic degrade-to-static: the run continues, Bash is stripped, Hunt
+  marks the affected findings `needs_poc: true` instead of failing.
+- **`remediate --verify`** calls the stricter `sandbox.require()`, which
+  *raises* `SandboxError` when there's no active sandbox and no escape.
+
+The **decoupled** `vash remediate` and `vash validate` commands are
+read-only by config even before that gate (no `Bash`, no `Write` — see the
+`remediate` / `revalidate` stage comments in `config/stages.yaml`) and have
+no live-target exception either — patch/verdict generation itself never
+touches the network or executes anything from the target. A patch is a
+unified diff produced by an agent *reading* code; it is written to disk and
+never applied or run.
 
 The only execution ever contemplated on that decoupled path is
 `remediate --verify` — optionally running the target's **own** test suite to
 confirm a generated patch. That execution is still DEFERRED (no test is
-actually run yet), and it is now gated: before doing anything else, `--verify`
-calls `vash.sandbox.require()`, which refuses unless it detects an active
-isolation sandbox (`VASH_SANDBOX=1`, set by a gVisor/container wrapper, or a
-`/.dockerenv` marker). With no sandbox, the refusal is fail-soft — it's
-recorded on the affected patches' `risk_notes` rather than aborting the
-batch. `--dangerously-no-sandbox` bypasses the gate with a loud warning, for
-local dev only; never pass it against source you don't already trust.
+actually run yet), and it is gated as described above: before doing
+anything else, `--verify` calls `sandbox.require()`. With no sandbox, the
+refusal is fail-soft — it's recorded on the affected patches' `risk_notes`
+rather than aborting the batch. `--dangerously-no-sandbox` bypasses the gate
+with a loud warning, for local dev only; never pass it against source you
+don't already trust.
 
 ## CI & recall gate
 

@@ -17,7 +17,7 @@ stages:
   hunt:
     model: claude-sonnet-5
     concurrency: 50
-    tools: [Read, Grep, Glob]     # no Bash: static-first — Hunt never executes/compiles target code
+    tools: [Read, Grep, Glob, Bash]  # Bash = PoC execution, ACTIVE ONLY inside a sandbox (runner strips it on a bare host)
   validate:
     model: claude-opus-4-8        # different from hunt — deliberate disagreement
     concurrency: 10
