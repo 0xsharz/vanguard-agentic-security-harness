@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vash"
 version = "0.1.0"
-description = "Cloudflare-style 8-stage vulnerability discovery audit agent driven by Claude Code subscription auth"
+description = "VASH (Vanguard Agentic Security Harness) — static-first Python vulnerability discovery agent"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

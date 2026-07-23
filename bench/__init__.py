@@ -2,7 +2,7 @@
 against known-vulnerable seed targets.
 
 Additive package: nothing here is imported by, or modifies, the `audit`
-package itself. See /Users/snatarajan14/audit/docs/wiring-notes.md for the
+package itself. See /Users/snatarajan14/vash/docs/wiring-notes.md for the
 `audit` CLI/result shapes this package parses, and
 .superpowers/sdd/task-0.3-brief.md for the task this was built for.
 

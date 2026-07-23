@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
-AUDIT_REPO_ROOT = BENCH_DIR.parent  # /Users/snatarajan14/audit
+AUDIT_REPO_ROOT = BENCH_DIR.parent  # /Users/snatarajan14/vash
 GROUND_TRUTH_DIR = BENCH_DIR / "ground_truth"
 
 # bench's own scratch space: clones + phase-driver state. Gitignored (like

@@ -51,7 +51,7 @@ def _setup_logging(verbose: bool) -> None:
 @click.option("-v", "--verbose", is_flag=True, help="DEBUG logging.")
 @click.pass_context
 def main(ctx: click.Context, verbose: bool) -> None:
-    """audit — Cloudflare-style 8-stage vulnerability discovery agent."""
+    """VASH — Vanguard Agentic Security Harness: static-first vulnerability discovery agent."""
     ctx.ensure_object(dict)
     _setup_logging(verbose)
 
