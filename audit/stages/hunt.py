@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
+from audit.graph_context import neighbors_for_files
 from audit.lang.hints import detect_languages, hints_for
 from audit.runner import (
     AgentRunError,
@@ -74,6 +75,10 @@ async def run_hunt(
                 "language_hints": language_hints,
                 **ctx.extras(),
             }
+            gq = ctx.graph()
+            gc = neighbors_for_files(gq, task.target_files) if gq else {}
+            if gc:
+                user_input["graph_context"] = gc
             try:
                 result = await run_agent(
                     stage="hunt",

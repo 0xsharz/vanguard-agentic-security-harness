@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from audit.cvss import rating as cvss_rating, score as cvss_score
+from audit.graph_context import neighbors_for_finding
 from audit.runner import AgentRunError, TransientAgentError, run_agent
 from audit.state import Finding, StateDB
 from audit.stages._common import StageContext
@@ -84,6 +85,10 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
                 "repo_path": str(ctx.repo_path),
                 **ctx.extras(),
             }
+            gq = ctx.graph()
+            gc = neighbors_for_finding(gq, f.file, f.line_start) if gq else {}
+            if gc:
+                user_input["graph_context"] = gc
             try:
                 result = await run_agent(
                     stage="validate",

@@ -41,6 +41,17 @@ external network). Use it to *try to make the bug reproduce*; a finding
 that doesn't reproduce against the live target is a strong rejection
 signal.
 
+# Graph context (optional)
+
+`graph_context` (when present) lists the finding's enclosing symbol's
+`callers` and `callees`, plus its blast radius (`reachable_files`), from a
+deterministic static call graph — not an LLM guess. Check whether any listed
+**caller** sanitizes/validates before reaching this code (Method step 2),
+and whether any listed **callee** neutralizes the payload before it truly
+becomes a sink (Method step 3). It only tells you WHERE to look — you MUST
+still read the actual code and apply "verify defenses empirically" below;
+the graph itself is never proof that a defense exists or is effective.
+
 # Tools available
 
 Read, Grep, Glob. Bash is available **only** when `live_target` is

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from audit.config import HarnessConfig, StageConfig
@@ -26,9 +26,34 @@ class StageContext:
     # Path to the cached code graph (audit.graph). Set by the taint step (V8)
     # once built so later graph consumers (V6/F2) can reuse the same cache.
     graph_cache_path: Path | None = None
+    # Memoized GraphQuery for this run (V6). Not part of equality/repr —
+    # purely a run-scoped cache populated lazily by graph().
+    _graph: "GraphQuery | None" = field(default=None, repr=False, compare=False)
+    _graph_loaded: bool = field(default=False, repr=False, compare=False)
 
     def stage(self, name: str) -> StageConfig:
         return self.config.get(name)
+
+    def graph(self):
+        """Return a memoized GraphQuery for this run, or None (fail-open).
+
+        Loads the graph V8 already cached at graph_cache_path (fast cache
+        hit); falls back to the default cache path + build_or_load if unset.
+        Never raises: any failure (missing/corrupt cache, graphify error,
+        etc.) yields None so Hunt/Validate proceed exactly as before (no
+        graph_context key added)."""
+        if self._graph_loaded:
+            return self._graph
+        self._graph_loaded = True
+        try:
+            from audit.graph import GraphQuery, build_or_load
+            cache = self.graph_cache_path or (self.work_dir("graph") / "graph.json")
+            doc = build_or_load(self.repo_path, cache)
+            self.graph_cache_path = cache
+            self._graph = GraphQuery(doc, self.repo_path) if doc.nodes else None
+        except Exception:
+            self._graph = None
+        return self._graph
 
     def extras(self) -> dict:
         """Optional fields merged into every agent's user_input."""

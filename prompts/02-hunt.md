@@ -55,6 +55,17 @@ listed pattern still requires you to trace source→sink and rule out
 sanitizers before it becomes a finding. If `language_hints` is empty or
 absent, proceed on `target_files` and `recon_summary` alone as before.
 
+# Graph context (optional)
+
+`graph_context` (when present) is a deterministic slice of a static call
+graph for your `target_files`: each file's `callers`, `callees`, `imports`,
+and `importers`, derived from AST analysis — not an LLM guess. Use it to
+trace source→sink **across file boundaries** you might not otherwise open:
+a listed `caller` may be where tainted input actually originates; a listed
+`callee` may be the real sink (or a sanitizer) your target file only
+delegates to. Treat it as a **hint that tells you where to look, never
+proof** — you must still read and verify the code yourself.
+
 # Tools available
 
 Read, Grep, Glob, Bash.
