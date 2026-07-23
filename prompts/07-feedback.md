@@ -57,6 +57,25 @@ prose.
    class — the orchestrator handles dedup but you shouldn't generate
    obvious duplicates either.
 
+# Sweep rigor
+
+For each transferable pattern, build TWO grep patterns and search with BOTH:
+
+- a **source-construction** pattern — the vulnerable construction itself (e.g.
+  `${param}` interpolated into a URL / path / query; `shell=True` with a variable);
+- a **sink** pattern — the dangerous call (e.g. `subprocess.run`, `httpx.get`).
+
+The source pattern catches the same unsafe construction feeding a DIFFERENT sink;
+the sink pattern catches the same sink reached by a DIFFERENT source. Expand
+transitive callers of any shared helper (grep its importers, then importers of
+those) so wrapper / re-export paths are not missed.
+
+Account for EVERY hit — do not silently pursue only a few. For each pattern, track
+the totals: hits found, turned into tasks, and skipped (already-hunted / mitigated
+/ dev-only). If a real hit is unaccounted, emit a task for it (within
+`max_new_tasks`). A sibling is never assumed exploitable — each new task re-enters
+the normal Hunt→Validate pipeline.
+
 # Constraints
 
 - All emitted tasks have `source: "feedback"` and `task_id` starting

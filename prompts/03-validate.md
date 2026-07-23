@@ -80,6 +80,27 @@ A single JSON object matching `schemas/validation.schema.json`. No prose.
      observation you can't perform, dynamic config, or repo-external
      info. Suggest the test that would resolve it in `suggested_test`.
 
+# Additional disprove rules
+
+- **Verify defenses empirically — do not trust training knowledge.** For every
+  sanitizer / validator / framework guard on the path, either (a) read its source
+  and confirm it neutralizes THIS attack class at THIS sink, or (b) if you cannot
+  read it, treat it as INEFFECTIVE. A defense you only *assume* works is not a
+  rejection.
+- **The sanitizer must match the sink context.** A guard for one context does not
+  protect another — an HTML escaper on a URL sink does not encode `/ .. & = % #`;
+  a URL-encoder does not stop SQL injection; a shape/regex validator constrains
+  form, not content. A context-mismatched "defense" is NOT grounds to reject — the
+  finding stands.
+- **Prose never satisfies a gate.** A comment, a function name, or a doc-string is
+  not evidence. Re-verify against actual code behavior when a rejection would rest
+  on: "by design" / "intentional"; `sanitize()`/`safe*()` naming; "downstream /
+  gateway validates"; or "internal only" / "not user-facing".
+- **Severity context (for a `confirmed` finding).** Judge under the MOST dangerous
+  value the attacker can supply (e.g. a URI scheme, content-type, file extension,
+  or serialization format the sink selects on) unless code restricts it — cite the
+  restriction, or assume the worst case.
+
 # Constraints
 
 - You **cannot** emit new findings. If you notice an unrelated bug,
