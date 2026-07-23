@@ -270,6 +270,37 @@ class GraphQuery:
             frontier = nxt
         return out
 
+    def callers_within(self, node_ids: Iterable[str], max_hops: int = 3) -> set[str]:
+        """Reverse BFS over `calls` edges: all node ids that reach any of
+        `node_ids` within ``max_hops`` edges (excludes the seeds themselves).
+
+        The backward complement of ``taint_paths`` — where that walks callee
+        (out) edges forward from entries to sinks, this walks caller (in) edges
+        backward from sinks to their reachable callers. Used by F3's
+        sink-backward hunting to gather the functions that can reach an orphan
+        sink. Pure/graph-only: expands only ``_in_edges`` with ``kind ==
+        "calls"``; a direct caller is 1 hop.
+        """
+        seeds = [n for n in node_ids if n]
+        if not seeds:
+            return set()
+        callers: set[str] = set()
+        visited: set[str] = set(seeds)
+        frontier: list[tuple[str, int]] = [(s, 0) for s in seeds]
+        while frontier:
+            nxt: list[tuple[str, int]] = []
+            for node, hops in frontier:
+                if hops >= max_hops:
+                    continue
+                for caller, kind in self._in_edges.get(node, ()):
+                    if kind != "calls" or caller in visited:
+                        continue
+                    visited.add(caller)
+                    callers.add(caller)
+                    nxt.append((caller, hops + 1))
+            frontier = nxt
+        return callers
+
     # ---- internals ----
 
     def _symbol_at_line(self, file: str, line: int) -> str | None:

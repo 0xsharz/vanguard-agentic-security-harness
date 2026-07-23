@@ -129,6 +129,69 @@ is `{task_id, findings: [...], gaps_observed: [...]}`. No prose.
    couldn't (size, complexity, lack of context). Be honest — Gapfill
    uses this to re-queue.
 
+# Sink-driven (backward) modality
+
+**When `source == "sink_backward"` (or the `scope_hint` says "backward
+audit"), invert the method.** This task names a *known-dangerous sink* that
+forward input-tracing did NOT connect to any enumerated source — an **orphan
+sink**. Do not start from an input. Start **at the sink** named in
+`scope_hint` and trace **backward through its callers** (`target_files` lists
+the sink file first, then its backward-reachable caller files) to answer:
+*can attacker-controlled data reach this sink along some path, and is there a
+missing sanitizer?* The sink is already established as dangerous — the open
+questions are **reachability** and **sanitization**, not "is this a sink."
+
+Run the audit that matches the sink's `attack_class`. Ported and adapted from
+VulnHunter's Sink-Driven Audit Agent:
+
+1. **Injection / exec sinks** (`command_injection`, `code_injection`):
+   for each caller of `subprocess.*` / `os.system` / `os.popen` / `eval` /
+   `exec` / `compile` / `__import__`, does any caller pass a value derived from
+   request / CLI (`sys.argv`) / file contents / env (`os.environ`) **without**
+   shell-safe quoting (`shlex.quote`, arg-list form without `shell=True`) or an
+   allowlist? If yes → CANDIDATE.
+2. **Deserialization sinks** (`deserialization`): for `pickle.loads` /
+   `yaml.load` (no `SafeLoader`) / `marshal.loads` / `dill` / `jsonpickle`,
+   does any caller feed externally-sourced bytes (request body, uploaded file,
+   queue message, cache)? If yes → CANDIDATE.
+3. **Path sinks** (`path_traversal`): for `open` / `os.path.join` /
+   `send_file` / `send_from_directory` / `shutil.*` / `Path`, does any caller
+   pass an un-normalized external path? Check for missing `..` rejection /
+   `os.path.realpath` containment / basename-only handling.
+4. **SSRF / SQL sinks** (`ssrf`, `sql_injection`): for `requests.*` /
+   `urllib.request.urlopen` / `httpx` / `socket.connect`, or `cursor.execute` /
+   `session.execute` / `text()`, does any caller supply an attacker-influenced
+   URL/host or a query built by string interpolation (f-string, `%`, `+`,
+   `.format`) rather than bound parameters?
+
+**Portable audits (attacker input NOT required — the flaw is in the mechanism
+itself; do not dismiss these for lack of a tainted source):**
+
+- **Weak crypto (CWE-327)**: crypto in a security-sensitive context (auth, PII,
+  sessions, signatures, tokens) using a broken algorithm/mode/key size — MD5 /
+  SHA-1 for integrity or passwords, DES / ECB, RSA < 2048, hard-coded IVs.
+  Weak crypto in a sensitive context is itself a CANDIDATE.
+- **Secrets in insecure storage (CWE-312)**: private keys, tokens, credentials,
+  or PII written to logs (`logging.*`, `print`) or to plaintext storage
+  (world-readable files, unencrypted DB columns, cookies). Check fallback paths
+  where protected data degrades to plaintext.
+- **Concurrency / race (CWE-367)**: for each `ThreadPoolExecutor` /
+  `executor.submit` / `asyncio.create_task` / fire-and-forget coroutine (no
+  `await`), ask: what state does the async op mutate, does a later operation
+  depend on that mutation, and is there a lock/transaction ensuring completion
+  first? If not → CANDIDATE. Also flag TOCTOU (check-then-use on a shared file
+  / DB row without a lock).
+- **Rotatable rate-limit / attempt counters (CWE-307)**: attempt/lockout
+  counters keyed to a rotatable identifier (fresh session, ephemeral cookie, or
+  a client-supplied value) on an **unauthenticated** endpoint — if the attacker
+  can reset the counter by rotating the key, the limit is bypassable → CANDIDATE.
+
+This checklist is a **hint** to guide reading, not a verdict. Everything found
+this way is still an ordinary finding: pin it to lines, extract verbatim
+evidence, attempt a PoC, set severity/confidence honestly, and let the same
+gates and the adversarial Validate stage decide. Emit findings only for the
+task's `attack_class`; other classes you notice go into `gaps_observed`.
+
 # Constraints
 
 - You may emit findings **only** for `attack_class`. Other vulnerability

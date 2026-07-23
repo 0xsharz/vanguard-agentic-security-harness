@@ -26,8 +26,8 @@
     "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
     "source": {
       "type": "string",
-      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint"],
-      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8)."
+      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint", "sink_backward"],
+      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8); 'sink_backward' = orphan-sink backward audit — a dangerous sink no enumerated input reaches, hunted backward through its callers (F3)."
     }
   }
 }

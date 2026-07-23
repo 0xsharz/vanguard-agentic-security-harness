@@ -244,6 +244,38 @@ def _target_files(
     return files
 
 
+def _resolve_entries(
+    graph: "GraphQuery", inputs: list[dict]
+) -> dict[str, tuple[dict, Entry]]:
+    """Resolve each F1 input's ``location`` to its enclosing entry symbol id.
+
+    Returns a mapping ``symbol_id -> (input_dict, Entry)`` deduped by symbol
+    (first input wins) and insertion-ordered. The single source of truth for the
+    taint *entry set*, shared by ``build_taint_tasks`` (forward) and — via
+    ``_entry_ids`` — ``build_sink_backward_tasks`` (which needs only the ids to
+    compute which sinks are already forward-reached). Extracted from V8's inline
+    loop; behavior-preserving (V8's tests guard it).
+    """
+    entry_by_id: dict[str, tuple[dict, Entry]] = {}
+    for inp in inputs:
+        file, line = _split_location(inp.get("location"))
+        if not file:
+            continue
+        symbol_id = graph.symbol_at_line(file, line)
+        if not symbol_id or symbol_id in entry_by_id:
+            continue
+        entry_by_id[symbol_id] = (
+            inp, Entry(file, line, symbol_id, inp.get("trust_level") or "unknown")
+        )
+    return entry_by_id
+
+
+def _entry_ids(graph: "GraphQuery", inputs: list[dict]) -> list[str]:
+    """Ordered, unique entry symbol ids for the F1 inputs (the brief's shared
+    helper). Thin wrapper over ``_resolve_entries``."""
+    return list(_resolve_entries(graph, inputs))
+
+
 def build_taint_tasks(
     graph: "GraphQuery",
     inputs: list[dict],
@@ -263,22 +295,9 @@ def build_taint_tasks(
          dedup by ``(entry_symbol, sink_id, frozenset(target_files))``, cap at
          ``max_tasks``.
     """
-    # 1. entries
-    entry_by_id: dict[str, tuple[dict, Entry]] = {}
-    entry_ids: list[str] = []
-    for inp in inputs:
-        file, line = _split_location(inp.get("location"))
-        if not file:
-            continue
-        symbol_id = graph.symbol_at_line(file, line)
-        if not symbol_id:
-            continue
-        if symbol_id not in entry_by_id:
-            entry_by_id[symbol_id] = (
-                inp,
-                Entry(file, line, symbol_id, inp.get("trust_level") or "unknown"),
-            )
-            entry_ids.append(symbol_id)
+    # 1. entries (shared derivation — see _resolve_entries / _entry_ids)
+    entry_by_id = _resolve_entries(graph, inputs)
+    entry_ids = list(entry_by_id)
     if not entry_ids:
         return []
 
@@ -347,4 +366,117 @@ def _emit_task(
             f"this reachable flow is the precondition for a confirmed data-flow finding."
         ),
         "priority": 1,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sink-backward hunting (feature F3) — the BACKWARD complement of V8.
+#
+# V8 (build_taint_tasks) covers sinks reachable FORWARD from an F1-enumerated
+# input. The recall gap is **orphan sinks**: dangerous sinks that NO enumerated
+# input reaches (F1 missed the source, or it is subtle). F3 hunts those
+# backward — starting AT the sink and tracing through its callers so the Hunter
+# can discover the source. Because ``orphans = all_sinks − forward_reached``,
+# F3's tasks are disjoint from V8's by construction (never re-emitting a sink V8
+# already covered) — pure new coverage. Every task re-enters the normal
+# Hunt→Validate loop, so precision stays protected by the adversarial Validate.
+#
+# Reuses V8 wholesale: ``find_sinks``/``PYTHON_SINKS`` for the sink table,
+# ``taint_paths`` to compute which sinks are already forward-reached, and
+# ``GraphQuery.callers_within`` (the new backward primitive) for the callers.
+# ---------------------------------------------------------------------------
+# Cap on caller files listed in one backward task — enough to point the Hunter
+# at the reachable surface without an unbounded target_files fan-out.
+_MAX_BACKWARD_FILES = 15
+
+
+def build_sink_backward_tasks(
+    graph: "GraphQuery",
+    inputs: list[dict],
+    repo_path: Path,
+    *,
+    max_tasks: int = 20,
+    max_back_hops: int = 3,
+) -> list[dict]:
+    """Emit one backward ``hunt_task`` per **orphan sink symbol** — a dangerous
+    sink that NO enumerated input reaches forward. Never raises for
+    empty/degenerate input — returns ``[]``.
+
+    Steps (per the F3 brief):
+      1. Scan for sinks (``find_sinks``); pick one representative per enclosing
+         symbol (first-seen wins).
+      2. Resolve F1 entry symbols (``_entry_ids``) and run the forward BFS
+         (``taint_paths``) to learn which sink symbols are already reached.
+      3. ``orphans = sinks whose symbol is NOT forward-reached`` (disjoint from
+         V8 by construction — the correctness property F3 rests on).
+      4. For each orphan: gather its backward-reachable callers
+         (``callers_within``), map to files, and emit a priority-2
+         ``source="sink_backward"`` task naming it an orphan sink.
+      Dedup by symbol, cap at ``max_tasks``.
+    """
+    # 1. sinks — one representative per enclosing symbol (deterministic order).
+    sinks = find_sinks(repo_path, graph)
+    if not sinks:
+        return []
+    sink_by_symbol: dict[str, Sink] = {}
+    for s in sinks:
+        sink_by_symbol.setdefault(s.symbol_id, s)
+    sink_ids = list(sink_by_symbol)
+
+    # 2. which sink symbols are already reached FORWARD from an F1 input.
+    entry_ids = _entry_ids(graph, inputs)
+    reached: set[str] = set()
+    if entry_ids:
+        reached = {sid for sid, _ in graph.taint_paths(entry_ids, sink_ids, max_hops=8)}
+
+    # 3. orphans = all sinks − forward-reached (the disjointness property).
+    orphans = [sink_by_symbol[sid] for sid in sink_ids if sid not in reached]
+    if not orphans:
+        return []
+
+    # 4. emit one backward task per orphan sink symbol.
+    tasks: list[dict] = []
+    for sink in orphans:
+        back = graph.callers_within([sink.symbol_id], max_back_hops)
+        caller_files = sorted({
+            f for f in (_node_file(graph, nid) for nid in back)
+            if f and f in graph._by_file and f != sink.file
+        })
+        target_files = ([sink.file] + caller_files)[:_MAX_BACKWARD_FILES]
+        tasks.append(
+            _emit_sink_backward_task(len(tasks) + 1, graph, sink, len(back), target_files)
+        )
+        if len(tasks) >= max_tasks:
+            break
+    return tasks
+
+
+def _emit_sink_backward_task(
+    n: int,
+    graph: "GraphQuery",
+    sink: Sink,
+    n_callers: int,
+    target_files: list[str],
+) -> dict:
+    sink_name = _node_label(graph, sink.symbol_id)
+    return {
+        "task_id": f"t_sinkback_{n:02d}",
+        "source": "sink_backward",
+        "attack_class": sink.attack_class,
+        "target_files": target_files,
+        "scope_hint": (
+            f"Backward audit of {sink.attack_class} sink {sink_name}() at "
+            f"{sink.file}:{sink.line}. No enumerated input reaches it — trace "
+            f"backward through its callers ({n_callers} functions) to find "
+            f"whether ANY reachable path carries attacker-controlled data to "
+            f"this sink without sanitization."
+        ),
+        "rationale": (
+            f"Orphan sink: forward input-tracing (V8) reached no enumerated "
+            f"input for this {sink.attack_class} sink {sink_name}() at "
+            f"{sink.file}:{sink.line}. Hunting it BACKWARD from the sink is "
+            f"distinct recall — it catches a dangerous sink whose source F1 "
+            f"missed, or that no enumerated input flows to."
+        ),
+        "priority": 2,
     }

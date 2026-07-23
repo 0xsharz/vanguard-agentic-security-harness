@@ -14,7 +14,7 @@ from audit.graph import GraphQuery, build_or_load
 from audit.runner import QuotaExhaustedError
 from audit.state import StateDB, Task
 from audit.stages._common import StageContext
-from audit.taint import build_taint_tasks
+from audit.taint import build_sink_backward_tasks, build_taint_tasks
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +239,50 @@ def _add_taint_tasks(ctx: StageContext, db: StateDB) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Sink-backward hunting (feature F3) — the BACKWARD complement of V8's taint.
+#
+# V8 covers sinks reachable FORWARD from an enumerated input. The recall gap is
+# **orphan sinks** — dangerous sinks that NO enumerated input reaches. This step
+# queues one backward hunt task per orphan sink (trace through its callers to
+# discover the source). Orphans are ``all_sinks − forward_reached``, so these
+# tasks are disjoint from V8's by construction — pure new coverage. Fail-open
+# and gated exactly like _add_taint_tasks; reuses the graph V8 already cached
+# (ctx.graph()) — no rebuild.
+# ---------------------------------------------------------------------------
+
+def _add_sink_backward_tasks(ctx: StageContext, db: StateDB) -> None:
+    """Queue backward hunt tasks for orphan sinks (dangerous sinks no
+    enumerated input reaches forward).
+
+    **Fail-open**: every error is logged and swallowed — sink-backward hunting
+    must NEVER abort a run. **Gated**: reuses the graph V8 already built and
+    memoized (``ctx.graph()`` — do NOT rebuild); skips a low-confidence graph
+    (unreliable reachability) and a graph with no ``calls`` edges (no callers to
+    trace backward — also keeps the e2e stub green, whose fixture graph is
+    high-confidence with only imports/defines edges).
+    """
+    try:
+        gq = ctx.graph()
+        if gq is None or gq.status().get("confidence") == "low":
+            return
+        if not any(e.kind == "calls" for e in gq._doc.edges):
+            log.info(
+                "[%s] sink-backward: skipped (graph has no calls edges)", ctx.run_id
+            )
+            return
+        tasks = build_sink_backward_tasks(gq, db.get_inputs(ctx.run_id), ctx.repo_path)
+        for t in tasks:
+            db.add_task(ctx.run_id, t)
+        log.info(
+            "[%s] sink-backward: %d orphan-sink audit tasks", ctx.run_id, len(tasks)
+        )
+    except Exception as e:  # fail-open — sink-backward must never abort a run
+        log.warning(
+            "[%s] sink-backward failed (continuing run): %s", ctx.run_id, e
+        )
+
+
 async def run_pipeline(
     *,
     repo_path: Path,
@@ -303,6 +347,13 @@ async def run_pipeline(
         # Runs after Recon (inputs enumerated) and before the Hunt loop so the
         # Hunter picks up the taint tasks. Fail-open + gated (see helper).
         _add_taint_tasks(ctx, db)
+
+        # ---- F3: sink-backward hunting for orphan sinks ----
+        # The BACKWARD complement of V8: for dangerous sinks NO enumerated input
+        # reaches, queue a backward audit task. Disjoint from V8 by construction
+        # (orphans = all_sinks − forward_reached). Reuses ctx.graph() (no
+        # rebuild). Fail-open + gated (see helper).
+        _add_sink_backward_tasks(ctx, db)
 
         # ---- Stages 2-3-4 loop: Hunt → Validate → Gapfill ----
         for i in range(config.gapfill_iterations + 1):
