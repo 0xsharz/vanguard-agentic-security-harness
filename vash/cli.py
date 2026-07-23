@@ -27,11 +27,14 @@ def _allow_api_key_from_env_or_flag(flag: bool) -> bool:
 from vash.config import load_config
 from vash.orchestrator import CostExceeded, run_pipeline
 from vash.redact import redact_json
+from vash.stages._common import StageContext
+from vash.stages.remediate import run_remediate
 from vash.state import StateDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = REPO_ROOT / "state.db"
 RESULTS_ROOT = REPO_ROOT / "results"
+DEFAULT_POLICY_PATH = REPO_ROOT / "config" / "remediation_policy.yaml"
 
 console = Console()
 
@@ -238,6 +241,73 @@ def report(run_id: str, fmt: str) -> None:
             click.echo(json.dumps(payload, indent=2))
         else:
             click.echo(_render_markdown_report(payload))
+    finally:
+        db.close()
+
+
+@main.command("remediate")
+@click.option("--run-id", required=True, help="Remediate a prior run's confirmed findings.")
+@click.option("--repo", "repo", default=None,
+              type=click.Path(exists=True, file_okay=False),
+              help="Target repo (default: the path recorded for the run).")
+@click.option("--policy", "policy_path", default=None, type=click.Path(),
+              help="Remediation policy YAML (default: config/remediation_policy.yaml).")
+@click.option("--out", "out_dir", default=None, type=click.Path(),
+              help="Output dir (default: results/<run-id>/remediation).")
+@click.option("--verify", is_flag=True, default=False,
+              help="Run the target's tests to verify patches — DEFERRED to the "
+                   "execution sandbox (Phase 4.1); currently a no-op.")
+@click.option("--allow-api-key", is_flag=True, default=False,
+              help="Honor ANTHROPIC_API_KEY for metered Anthropic billing "
+                   "(also via AUDIT_ALLOW_API_KEY=1).")
+def remediate(run_id: str, repo: str | None, policy_path: str | None,
+              out_dir: str | None, verify: bool, allow_api_key: bool) -> None:
+    """Generate static, policy-gated root-cause patches + security tests for a
+    prior run's confirmed findings. Decoupled + opt-in — NOT part of `vash run`.
+
+    Reads the existing run's DB, enforces the VVAH policy gate (fail-closed)
+    BEFORE any patch agent, and writes diffs/tests/REMEDIATION.md (all redacted).
+    Patches are generated statically and marked needs_verification.
+    """
+    allow = _allow_api_key_from_env_or_flag(allow_api_key)
+    try:
+        configure_auth(allow_api_key=allow)
+    except AuthError as e:
+        console.print(f"[red]auth error:[/red] {e}")
+        sys.exit(2)
+
+    db = StateDB(DB_PATH)
+    try:
+        run = db.get_run(run_id)
+        if run is None:
+            console.print(f"[red]unknown run_id {run_id!r}[/red]")
+            sys.exit(1)
+        repo_path = Path(repo).resolve() if repo else Path(run["repo_path"])
+        policy = Path(policy_path) if policy_path else DEFAULT_POLICY_PATH
+        out = Path(out_dir) if out_dir else (RESULTS_ROOT / run_id / "remediation")
+        config = load_config()
+        ctx = StageContext(run_id=run_id, repo_path=repo_path, config=config)
+
+        if verify:
+            console.print("[yellow]--verify is deferred[/yellow] to the execution "
+                          "sandbox (Phase 4.1) — patches remain needs_verification")
+
+        summary = asyncio.run(run_remediate(
+            ctx, db, out_dir=out, policy_path=policy, verify=verify,
+        ))
+        c = summary["counts"]
+        if not summary["policy_valid"]:
+            console.print("[yellow]policy invalid/missing — fail-closed: "
+                          "all findings guidance-only[/yellow]")
+        console.print(
+            f"[green]remediation done[/green] run_id={run_id} — "
+            f"patched={c['patched']} guidance_only={c['guidance_only']} "
+            f"cannot_fix={c['cannot_fix']} (of {summary['total']})"
+        )
+        console.print(f"artifacts: {summary['out_dir']}")
+    except Exception as e:
+        console.print(f"[red]failed[/red] {type(e).__name__}: {e}")
+        raise
     finally:
         db.close()
 

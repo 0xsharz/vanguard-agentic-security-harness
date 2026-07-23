@@ -44,6 +44,8 @@ These files were copied byte-for-byte and **retain their Apache-2.0 header**
 | `vash/partition.py` | `s3_decompose._cohesive_groups` (concept) | union-find cohesive partitioning (F2) |
 | `prompts/09-chain.md` | `s8_chain` system prompt | exploit-chain construction (V11) |
 | `prompts/03-validate.md` (CVSS block) | `s6_verify` | CVSS-vector verification (V4) |
+| `config/remediation_policy.yaml`, `vash/remediation_policy.py` | `inputs/remediation_policy.yaml` + `remediation_agent` governance | remediation policy hard-gate — fail-closed CWE allow/deny + kill-switch (Phase 5). The YAML retains VVAH's Apache-2.0 header; CWE lists / kill-switch names tuned for VASH. |
+| `vash/stages/remediate.py::_CLASS_GUIDANCE` | `inputs/remediation_playbook.yaml` | per-class remediation guidance (Phase 5) |
 
 ### Adapted from Capital One VulnHunter (Apache-2.0) — not verbatim
 | VASH area | VulnHunter source | Feature |
@@ -53,6 +55,7 @@ These files were copied byte-for-byte and **retain their Apache-2.0 header**
 | `prompts/03-validate.md` (disprove-gates) | `phase2b_verify` per-class gates | static verification rigor (F5) |
 | `bench/analyze_misses.py` | `local_harness/benchmark/analyze_misses.py` | self-tuning miss-analysis (3.ST) |
 | `vash/graph/build.py` | `vulnhunter-fix/.../graph/build.py` (graphify) | AST call-graph (linchpin) |
+| `prompts/remediate.md` | `vulnhunter-fix/prompts/implement.md` + `worker_agent_{injection,authz,crypto,resource}.md` | static root-cause patch + security-test prompt, adapted to generate-only (Phase 5) |
 
 ### Benchmark ground truth
 `bench/ground_truth/datamodel-code-generator.json` contains real, source-verified
