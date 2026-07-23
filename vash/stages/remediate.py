@@ -16,8 +16,13 @@ Governance (ported from Visa VVAH):
 
 Static-first guardrails (OVERRIDE defaults):
   * Generation NEVER executes the target. ``verify=True`` (running the target's
-    own tests) is DEFERRED to the execution sandbox (Phase 4.1): it logs a
-    deferred notice and does NOT execute; patches stay ``needs_verification``.
+    own tests) now passes through the execution sandbox gate
+    (:mod:`vash.sandbox`, Phase 4.1) FIRST: with no active sandbox and no
+    ``--dangerously-no-sandbox`` escape, it is refused (fail-soft — the
+    refusal reason is recorded on each patched finding, the batch still
+    completes); with a sandbox present (or the escape), it proceeds to the
+    still-DEFERRED notice below. Either way NO target code is executed yet
+    and patches stay ``needs_verification``.
   * v1 writes diffs only — it does NOT apply patches to the working tree.
   * Every written artifact is redacted via :mod:`vash.redact`.
   * Fail-soft per finding — one finding's failure never aborts the batch.
@@ -34,6 +39,7 @@ import json
 import logging
 from pathlib import Path
 
+from vash import sandbox
 from vash.redact import redact, redact_json
 from vash.remediation_policy import (
     GUIDANCE_ONLY,
@@ -46,11 +52,13 @@ from vash.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 
-# Deferred-verify notice — logged verbatim when --verify is requested. Real
-# test execution needs the sandbox (Phase 4.1); it is intentionally NOT run here.
+# Deferred-verify notice — logged verbatim when --verify PASSES the sandbox
+# gate (vash.sandbox.require). Real test execution is a later task; it is
+# intentionally NOT run here — the gate only decides whether it would be
+# ALLOWED to run.
 DEFERRED_VERIFY_MSG = (
-    "[remediate] --verify requires the execution sandbox (Phase 4.1) — deferred; "
-    "patches remain needs_verification"
+    "[remediate] --verify passed the sandbox gate — real test execution is "
+    "still deferred (a later task); patches remain needs_verification"
 )
 
 # Per-class remediation guidance, condensed from VVAH's remediation_playbook.yaml
@@ -319,8 +327,22 @@ def _render_one(lines: list[str], f: Finding, record: dict) -> None:
     lines.append("")
 
 
+def _apply_verify_gate_error(pairs: list[tuple[Finding, dict]], reason: str) -> None:
+    """Fail-soft: record why `--verify` could not proceed on every PATCHED
+    record in this batch (guidance_only/cannot_fix findings never had a
+    patch to verify, so they are left untouched). The patch, its diff/test,
+    and needs_verification are themselves untouched — nothing was executed;
+    the sandbox gate only decides whether execution would have been allowed."""
+    note = f"--verify refused: {reason}"
+    for _f, record in pairs:
+        if record.get("status") != "patched":
+            continue
+        existing = (record.get("risk_notes") or "").strip()
+        record["risk_notes"] = f"{existing}  {note}".strip() if existing else note
+
+
 def _render_markdown(run_id: str, pairs: list[tuple[Finding, dict]], policy,
-                     verify: bool, counts: dict) -> str:
+                     verify: bool, counts: dict, verify_gate_error: str | None) -> str:
     lines: list[str] = []
     lines.append(f"# Remediation — `{run_id}`")
     lines.append("")
@@ -337,8 +359,13 @@ def _render_markdown(run_id: str, pairs: list[tuple[Finding, dict]], policy,
                  f"{counts['guidance_only']} guidance-only, "
                  f"{counts['cannot_fix']} cannot-fix")
     if verify:
-        lines.append("- `--verify` requested: DEFERRED — requires the execution "
-                     "sandbox (Phase 4.1); patches remain `needs_verification`.")
+        if verify_gate_error:
+            lines.append(f"- `--verify` requested but REFUSED by the execution "
+                         f"sandbox gate: {verify_gate_error}")
+        else:
+            lines.append("- `--verify` requested: sandbox gate passed — real test "
+                         "execution is still DEFERRED (a later task); patches "
+                         "remain `needs_verification`.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -351,14 +378,19 @@ def _render_markdown(run_id: str, pairs: list[tuple[Finding, dict]], policy,
 
 
 async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
-                        policy_path: Path | str, verify: bool = False) -> dict:
+                        policy_path: Path | str, verify: bool = False,
+                        no_sandbox: bool = False) -> dict:
     """Turn a prior scan's confirmed canonical findings into static, policy-gated
     root-cause patches + security tests.
 
     Writes ``patches/<finding_id>.diff``, ``tests/<finding_id>_test.<ext>``,
     ``remediation.json`` and ``REMEDIATION.md`` under ``out_dir`` (all redacted),
     and returns a summary dict with per-status counts. NEVER executes the target;
-    ``verify=True`` is deferred to the sandbox. Fail-soft per finding."""
+    ``verify=True`` FIRST calls :func:`vash.sandbox.require` — a refusal is
+    fail-soft (recorded on the batch's patched records) — then falls through to
+    the still-deferred notice (real test execution is a later task).
+    ``no_sandbox`` threads the ``--dangerously-no-sandbox`` dev escape into that
+    gate; it does nothing when ``verify`` is False. Fail-soft per finding."""
     out_dir = Path(out_dir)
     patches_dir = out_dir / "patches"
     tests_dir = out_dir / "tests"
@@ -370,9 +402,20 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
         log.warning("[%s] remediate: policy invalid/missing (%s) — FAIL-CLOSED: "
                     "every finding is guidance-only", ctx.run_id, policy.error)
 
-    # --verify is deferred: log the notice, run NOTHING.
+    # --verify MUST pass the execution-sandbox gate FIRST. The gate decides
+    # PERMISSION only — no target code runs here or in the (still-deferred)
+    # notice below either way; a refusal is recorded fail-soft, once the
+    # batch's records exist (below), rather than aborting the run.
+    verify_gate_error: str | None = None
     if verify:
-        log.info(DEFERRED_VERIFY_MSG)
+        try:
+            sandbox.require(allow_no_sandbox=no_sandbox)
+        except sandbox.SandboxError as e:
+            verify_gate_error = str(e)
+            log.warning("[%s] remediate: --verify requested but refused by "
+                        "the sandbox gate: %s", ctx.run_id, e)
+        else:
+            log.info(DEFERRED_VERIFY_MSG)
 
     findings = db.get_findings(ctx.run_id, validation_status="confirmed",
                                canonical_only=True)
@@ -396,6 +439,11 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
             record = _cannot_fix_record(f, f"unexpected error: {e}")
         pairs.append((f, record))
 
+    # Sandbox gate refused --verify: record why on every patched finding
+    # (fail-soft — the batch above already ran to completion statically).
+    if verify_gate_error:
+        _apply_verify_gate_error(pairs, verify_gate_error)
+
     # Persist per-finding diff + test (redacted). Guidance/cannot_fix -> no diff.
     for _f, record in pairs:
         _write_patch_and_test(record, patches_dir, tests_dir)
@@ -410,6 +458,7 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
         "static_first": True,
         "verify_requested": verify,
         "verify_executed": False,
+        "verify_gate_error": verify_gate_error,
         "policy": {
             "source": policy.source,
             "valid": policy.valid,
@@ -422,7 +471,7 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
     (out_dir / "remediation.json").write_text(
         json.dumps(redact_json(summary_payload), indent=2))
 
-    md = _render_markdown(ctx.run_id, pairs, policy, verify, counts)
+    md = _render_markdown(ctx.run_id, pairs, policy, verify, counts, verify_gate_error)
     (out_dir / "REMEDIATION.md").write_text(redact(md))
 
     log.info("[%s] remediate: patched=%d guidance_only=%d cannot_fix=%d -> %s",

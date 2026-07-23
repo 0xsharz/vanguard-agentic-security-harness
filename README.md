@@ -243,6 +243,27 @@ The agent reads everything you `--add-dir`, including any `.env` or
 `secrets/` directories in the target. Outputs land in `results/<run-id>/`
 which is `.gitignore`d but **not** scrubbed of those reads.
 
+### Static-first guarantee — `remediate` / `validate`, and the sandbox gate
+
+The two paragraphs above are about `vash run` (Hunt/Trace do intentionally
+compile/run PoCs, as described). The **decoupled** `vash remediate` and
+`vash validate` commands are different: both are read-only by config (no
+`Bash`, no `Write` — see the `remediate` / `revalidate` stage comments in
+`config/stages.yaml`) and never execute anything from the target. A patch
+is a unified diff produced by an agent *reading* code; it is written to disk
+and never applied or run.
+
+The only execution ever contemplated on that decoupled path is
+`remediate --verify` — optionally running the target's **own** test suite to
+confirm a generated patch. That execution is still DEFERRED (no test is
+actually run yet), and it is now gated: before doing anything else, `--verify`
+calls `vash.sandbox.require()`, which refuses unless it detects an active
+isolation sandbox (`VASH_SANDBOX=1`, set by a gVisor/container wrapper, or a
+`/.dockerenv` marker). With no sandbox, the refusal is fail-soft — it's
+recorded on the affected patches' `risk_notes` rather than aborting the
+batch. `--dangerously-no-sandbox` bypasses the gate with a loud warning, for
+local dev only; never pass it against source you don't already trust.
+
 ## CI & recall gate
 
 Every PR runs two gates in GitHub Actions (`.github/workflows/ci.yml`):

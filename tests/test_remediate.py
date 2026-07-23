@@ -308,8 +308,14 @@ async def test_run_remediate_verify_logs_deferred_and_does_not_execute(
         db.create_run(str(tmp_path), "r1")
         _seed_confirmed_canonical(db, "r1", "f_sqli_1")
         with caplog.at_level(logging.INFO, logger="vash.stages.remediate"):
+            # no_sandbox=True: since Phase 4.1, --verify FIRST passes through
+            # the vash.sandbox execution gate (tests/test_sandbox.py covers
+            # that gate itself + its refusal path in depth) — the dev escape
+            # here is what lets this test still reach the deferred-notice
+            # behavior below, hermetically, with no ambient sandbox needed.
             summary = await run_remediate(_ctx(tmp_path), db, out_dir=out,
-                                          policy_path=policy, verify=True)
+                                          policy_path=policy, verify=True,
+                                          no_sandbox=True)
     finally:
         db.close()
 

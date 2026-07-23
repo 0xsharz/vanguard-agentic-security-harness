@@ -256,19 +256,30 @@ def report(run_id: str, fmt: str) -> None:
 @click.option("--out", "out_dir", default=None, type=click.Path(),
               help="Output dir (default: results/<run-id>/remediation).")
 @click.option("--verify", is_flag=True, default=False,
-              help="Run the target's tests to verify patches — DEFERRED to the "
-                   "execution sandbox (Phase 4.1); currently a no-op.")
+              help="Run the target's tests to verify patches. Gated by the "
+                   "execution sandbox (Phase 4.1): requires VASH_SANDBOX=1 "
+                   "(or --dangerously-no-sandbox) or it's refused fail-soft. "
+                   "Real test execution is still DEFERRED regardless.")
+@click.option("--dangerously-no-sandbox", "no_sandbox", is_flag=True, default=False,
+              help="DEV ONLY: bypass the --verify execution-sandbox gate "
+                   "(vash.sandbox.require) with a loud warning instead of an "
+                   "active sandbox. Unsafe against any target you don't "
+                   "already trust — never use this in CI or against "
+                   "untrusted source. No effect without --verify.")
 @click.option("--allow-api-key", is_flag=True, default=False,
               help="Honor ANTHROPIC_API_KEY for metered Anthropic billing "
                    "(also via AUDIT_ALLOW_API_KEY=1).")
 def remediate(run_id: str, repo: str | None, policy_path: str | None,
-              out_dir: str | None, verify: bool, allow_api_key: bool) -> None:
+              out_dir: str | None, verify: bool, no_sandbox: bool,
+              allow_api_key: bool) -> None:
     """Generate static, policy-gated root-cause patches + security tests for a
     prior run's confirmed findings. Decoupled + opt-in — NOT part of `vash run`.
 
     Reads the existing run's DB, enforces the VVAH policy gate (fail-closed)
     BEFORE any patch agent, and writes diffs/tests/REMEDIATION.md (all redacted).
-    Patches are generated statically and marked needs_verification.
+    Patches are generated statically and marked needs_verification. --verify
+    is gated by the execution sandbox (vash.sandbox.require) — see the
+    --dangerously-no-sandbox option above for the local-dev escape.
     """
     allow = _allow_api_key_from_env_or_flag(allow_api_key)
     try:
@@ -290,11 +301,21 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
         ctx = StageContext(run_id=run_id, repo_path=repo_path, config=config)
 
         if verify:
-            console.print("[yellow]--verify is deferred[/yellow] to the execution "
-                          "sandbox (Phase 4.1) — patches remain needs_verification")
+            if no_sandbox:
+                console.print("[yellow]--dangerously-no-sandbox[/yellow] set: "
+                              "--verify will bypass the execution sandbox gate "
+                              "with a loud warning — DEV ONLY, unsafe against "
+                              "untrusted source")
+            else:
+                console.print("[yellow]--verify requested[/yellow] — gated by "
+                              "the execution sandbox: requires VASH_SANDBOX=1 "
+                              "(or --dangerously-no-sandbox) or it's refused "
+                              "fail-soft. Real test execution itself remains "
+                              "DEFERRED either way.")
 
         summary = asyncio.run(run_remediate(
             ctx, db, out_dir=out, policy_path=policy, verify=verify,
+            no_sandbox=no_sandbox,
         ))
         c = summary["counts"]
         if not summary["policy_valid"]:
