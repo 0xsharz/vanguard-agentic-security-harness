@@ -146,6 +146,25 @@ def test_validation_rejects_bad_verdict() -> None:
     assert errors, "expected validation error for bad verdict enum"
 
 
+def test_validation_accepts_confirmed_with_cvss_vector() -> None:
+    # V4: a confirmed verdict may carry a CVSS 3.1 base vector (+ the
+    # pipeline-computed score/rating once Validate has processed it).
+    ok = {
+        **VALIDATION_OK,
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "cvss_score": 9.8,
+        "cvss_rating": "Critical",
+    }
+    errors = validate_schema(ok, SCHEMAS / "validation.schema.json")
+    assert errors == [], errors
+
+
+def test_validation_rejects_malformed_cvss_vector() -> None:
+    bad = {**VALIDATION_OK, "cvss_vector": "not-a-cvss-vector"}
+    errors = validate_schema(bad, SCHEMAS / "validation.schema.json")
+    assert errors, "expected validation error for malformed cvss_vector"
+
+
 def test_report_rejects_unknown_severity() -> None:
     bad = {
         **REPORT_OK,

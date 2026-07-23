@@ -422,6 +422,17 @@ class StateDB:
         )
         self._conn.commit()
 
+    def update_finding_severity(self, finding_id: str, severity: str) -> None:
+        """Overwrite a finding's severity. Used by Validate (V4) when a
+        confirmed finding's CVSS-vector base score yields a mapped band —
+        that band supersedes the hunter's original (LLM-assigned) severity
+        as the authoritative value read downstream by report.py (f.severity)."""
+        self._conn.execute(
+            "UPDATE findings SET severity = ? WHERE finding_id = ?",
+            (severity, finding_id),
+        )
+        self._conn.commit()
+
     def assign_finding_group(
         self, finding_id: str, group_id: str, is_canonical: bool
     ) -> None:

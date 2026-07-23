@@ -5,11 +5,50 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from audit.cvss import rating as cvss_rating, score as cvss_score
 from audit.runner import AgentRunError, TransientAgentError, run_agent
 from audit.state import Finding, StateDB
 from audit.stages._common import StageContext
 
 log = logging.getLogger(__name__)
+
+# CVSS 3.1 qualitative band -> audit's lowercase finding-severity enum
+# (schemas/finding.schema.json). Mirrors VVAH's
+# s8_chain._CVSS_BAND_TO_SEV / _sev_from_band. "None"/"Unknown" are
+# deliberately absent: they mean "no mapped band" so the caller keeps the
+# finding's existing severity instead of overwriting it.
+_CVSS_RATING_TO_SEVERITY = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+}
+
+
+def _severity_from_cvss_rating(rating: str | None) -> str | None:
+    """Map a CVSS 3.1 qualitative rating to audit's severity enum. Returns
+    None for "None"/"Unknown"/absent so the caller falls back to (i.e. keeps)
+    the finding's existing severity."""
+    return _CVSS_RATING_TO_SEVERITY.get((rating or "").strip().lower())
+
+
+def _apply_cvss(db: StateDB, finding_id: str, payload: dict) -> dict:
+    """For a confirmed verdict carrying a `cvss_vector`, compute its CVSS 3.1
+    base score/rating, fold both into the stored validation payload, and make
+    the CVSS band authoritative for the finding's severity.
+
+    Fail-open: an absent or unparseable vector (`cvss.score()` returns None)
+    leaves the payload and the finding's severity untouched — this must never
+    break validate."""
+    s = cvss_score(payload.get("cvss_vector"))
+    if s is None:
+        return payload
+    r = cvss_rating(s)
+    payload = {**payload, "cvss_score": s, "cvss_rating": r}
+    sev = _severity_from_cvss_rating(r)
+    if sev:
+        db.update_finding_severity(finding_id, sev)
+    return payload
 
 
 async def run_validate(ctx: StageContext, db: StateDB) -> int:
@@ -75,7 +114,10 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
                 return
 
             verdict = result.payload.get("verdict", "needs_more_info")
-            db.set_finding_validation(f.finding_id, verdict, result.payload)
+            payload = result.payload
+            if verdict == "confirmed":
+                payload = _apply_cvss(db, f.finding_id, payload)
+            db.set_finding_validation(f.finding_id, verdict, payload)
             db.record_cost(ctx.run_id, "validate", f.finding_id, result.raw_result_message)
             db.add_artifact(ctx.run_id, "validate", f.finding_id, "jsonl",
                             str(result.artifact_path))

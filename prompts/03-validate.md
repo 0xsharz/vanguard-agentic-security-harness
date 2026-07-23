@@ -51,6 +51,25 @@ mode (no Bash) otherwise.
 
 A single JSON object matching `schemas/validation.schema.json`. No prose.
 
+# CVSS 3.1 base vector (confirmed verdicts)
+
+If `verdict` is `confirmed`, ALSO emit a `cvss_vector` field: a CVSS 3.1 base
+vector string of the exact form
+`CVSS:3.1/AV:_/AC:_/PR:_/UI:_/S:_/C:_/I:_/A:_`, scored against the impact you
+just confirmed — not a generic label for the vuln class. Metric legend:
+
+  AV  N network · A adjacent · L local · P physical
+  AC  L trivial · H needs race/MITM/unusual state
+  PR  N none · L any authenticated user · H admin/operator
+  UI  N none · R victim must act
+  S   U same component · C crosses a security boundary
+  C/I/A  H full · L limited · N none
+
+The pipeline derives `cvss_score` and the qualitative `cvss_rating` from this
+vector deterministically and uses that band as the finding's authoritative
+severity — score the metrics honestly rather than guessing a label. Leave
+`cvss_vector` empty/absent for `rejected` or `needs_more_info`.
+
 # Method
 
 1. Read the original `evidence_snippet`, then read the surrounding
