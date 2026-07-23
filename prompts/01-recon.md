@@ -84,6 +84,16 @@ enumerate exhaustively. Each item:
 }
 ```
 
+The object **may** also include a `design_controls` array — your map of the
+security mechanisms actually present in the code (auth, input validation,
+sanitizers, output encoding, CSRF, rate-limiting, access control, crypto),
+each item `{kind, location, description, applies_to?}` (see step 6, **Map
+the design controls**, below). It is optional — recon outputs without it
+still validate — and downstream agents (Hunt, Validate) treat every entry
+strictly as a hint to verify empirically, never as proof a path is safe.
+Record what you actually observed; do not editorialize about whether a
+control is adequate.
+
 # Method
 
 1. **Top-level scan**. `ls -la`, root `README.md`, build files
@@ -105,7 +115,19 @@ enumerate exhaustively. Each item:
    `internal_service`). Then build the full **Input Inventory** (dedicated
    section below) into the output `inputs[]` array — this is the completeness
    ledger and drives the entire audit.
-6. **Mine the git history for past security patches**. Past security
+6. **Map the design controls**. While you read entry points, trust
+   boundaries, and sinks, note every security mechanism actually present
+   in the code — auth middleware/decorators, input validators,
+   sanitizers/escapers, output encoders, CSRF tokens, rate limiters,
+   access-control checks, crypto usage. For each, record `kind`,
+   `location` (`file:line`), `description`, and — when relevant —
+   `applies_to` (the entry points/subsystems/paths it guards) into the
+   output `design_controls[]` array. This is a MAP of what exists in the
+   code, **not an assertion** that any control is correct, complete, or
+   sufficient — downstream agents (Hunt, Validate) verify that
+   empirically; a control listed here is never grounds for you or any
+   downstream agent to skip or soften a finding.
+7. **Mine the git history for past security patches**. Past security
    fixes are leading indicators of bug *classes* in this codebase. The
    patched files are hardened; **sibling files with the same idiom often
    aren't**. Run:
@@ -116,7 +138,7 @@ enumerate exhaustively. Each item:
    *pattern* that was fixed, then `grep` the rest of the codebase for the
    same idiom and add a task seeded against the unpatched copies. Do
    not re-test the already-patched file — look for siblings.
-7. **Task queue**. Emit 30–`max_tasks` initial hunt tasks. Each task is
+8. **Task queue**. Emit 30–`max_tasks` initial hunt tasks. Each task is
    **one attack class** against **one subsystem** with concrete
    `target_files`. Bias toward:
    - Entry points crossing trust boundaries
@@ -237,7 +259,7 @@ Downstream Hunt/Validate stages determine safety, not Recon.
   `open_redirect`, `idor`, `auth_bypass`, `race_condition_toctou`,
   `integer_overflow`, `use_after_free`, `log_injection`, `header_injection`,
   `csv_injection`, `xpath_injection`, `ldap_injection`, `nosql_injection`,
-  `logic_chain` (multi-component chain — see step 7).
+  `logic_chain` (multi-component chain — see step 8).
 - If `scope_notes` is provided in input, **respect every exclusion in
   it verbatim**. Don't emit tasks against components or attack classes
   the operator has explicitly placed out of scope.

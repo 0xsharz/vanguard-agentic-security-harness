@@ -66,6 +66,20 @@ a listed `caller` may be where tainted input actually originates; a listed
 delegates to. Treat it as a **hint that tells you where to look, never
 proof** — you must still read and verify the code yourself.
 
+# Design controls (optional)
+
+`recon_summary.design_controls` (when present) is Recon's map of security
+mechanisms it observed in this codebase — auth middleware/decorators, input
+validators, sanitizers/escapers, output encoders, CSRF tokens, rate
+limiters, access-control checks, crypto usage — each with a `location` and
+what it guards. Use it to **prioritize**: a path relevant to your
+`attack_class` where no listed control applies is a stronger candidate than
+one where a control is listed. Do **not** use it to prune — a listed
+control is not proof the path is safe; it may be mislabeled, partial, or
+simply ineffective at this exact sink, and a real bug can exist behind it.
+Confirm or refute it the same way you treat `graph_context` above: read the
+actual code and trace source to sink yourself before drawing a conclusion.
+
 # Tools available
 
 Read, Grep, Glob, Bash.

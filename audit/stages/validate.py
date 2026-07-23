@@ -71,6 +71,13 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
     tasks_by_id = {t.task_id: t for t in db.get_all_tasks(ctx.run_id)}
     counters = {"confirmed": 0, "rejected": 0, "needs_more_info": 0, "failed": 0}
 
+    # V5: recon's design_controls map (if any), loaded once and injected into
+    # every finding's user_input as a verify-empirically hint (never a
+    # trusted exclusion) — see prompts/03-validate.md's "Design controls"
+    # section and the pre-existing "Verify defenses empirically" rule.
+    recon = db.get_recon_output(ctx.run_id) or {}
+    design_controls = recon.get("design_controls", [])
+
     async def _one(f: Finding) -> None:
         async with sem:
             task = tasks_by_id.get(f.task_id)
@@ -83,6 +90,7 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
                 "finding": f.raw_json,
                 "task_context": ctx_block,
                 "repo_path": str(ctx.repo_path),
+                **({"design_controls": design_controls} if design_controls else {}),
                 **ctx.extras(),
             }
             gq = ctx.graph()

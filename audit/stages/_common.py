@@ -92,6 +92,7 @@ def truncated_recon_summary(full: dict, subsystem_filter: str | None = None) -> 
     out: dict = {
         "architecture": full.get("architecture", {}),
         "subsystems": full.get("subsystems", []),
+        "design_controls": full.get("design_controls", []),   # V5
     }
     if subsystem_filter is not None:
         match = next(

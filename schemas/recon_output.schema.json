@@ -93,6 +93,21 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "hunt_task.schema.json" }
+    },
+    "design_controls": {
+      "type": "array",
+      "description": "Security controls the codebase employs. Optional so pre-V5 recon still validates. Injected downstream as HINTS to verify empirically — never as trusted exclusions.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "description": "auth|input_validation|output_encoding|csrf|rate_limit|access_control|sanitizer|crypto|other" },
+          "location": { "type": "string", "description": "file:line or subsystem where the control is implemented." },
+          "description": { "type": "string" },
+          "applies_to": { "type": "string", "description": "Optional: which entry points/subsystems/paths this control guards." }
+        }
+      }
     }
   }
 }

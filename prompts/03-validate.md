@@ -52,6 +52,20 @@ becomes a sink (Method step 3). It only tells you WHERE to look — you MUST
 still read the actual code and apply "verify defenses empirically" below;
 the graph itself is never proof that a defense exists or is effective.
 
+# Design controls (optional)
+
+An optional top-level `design_controls` lists security mechanisms Recon
+mapped in this codebase — auth checks, input validators, sanitizers,
+output encoders, CSRF/rate-limit/access-control guards, crypto usage —
+each with a `location` and what it guards. When one appears to cover this
+finding's path, you MUST still read its source and confirm it neutralizes
+THIS attack class at THIS sink, per "Verify defenses empirically" and
+"Prose never satisfies a gate" below. A listed control is a POINTER to
+investigate, never grounds to reject on its own. A context-mismatched
+control (per "The sanitizer must match the sink context" below) or one
+you did not actually read does NOT reject the finding — treat it as
+absent.
+
 # Tools available
 
 Read, Grep, Glob. Bash is available **only** when `live_target` is
