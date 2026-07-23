@@ -172,3 +172,40 @@ def test_report_rejects_unknown_severity() -> None:
     }
     errors = validate_schema(bad, SCHEMAS / "report.schema.json")
     assert errors, "expected validation error for unknown severity"
+
+
+# ---- F5 (redo): ai-proofscan exploitability removed, V11 chains preserved ----
+
+
+def test_trace_rejects_exploitability_field() -> None:
+    # F5 revert: trace.schema.json no longer defines `exploitability`, so
+    # additionalProperties:false must now reject it.
+    bad = {**TRACE_OK, "exploitability": {"vector": 2, "narrative": "x"}}
+    errors = validate_schema(bad, SCHEMAS / "trace.schema.json")
+    assert errors, "expected validation error: exploitability was removed from trace.schema.json"
+
+
+def test_report_rejects_needs_poc_and_exploitability_note() -> None:
+    # F5 revert: report.schema.json no longer defines these per-finding fields.
+    bad_finding = {**REPORT_OK["findings"][0], "needs_poc": True,
+                   "exploitability_note": "confirmed_static · needs PoC"}
+    bad = {**REPORT_OK, "findings": [bad_finding]}
+    errors = validate_schema(bad, SCHEMAS / "report.schema.json")
+    assert errors, "expected validation error: needs_poc/exploitability_note were removed"
+
+
+def test_report_still_accepts_chains_v11() -> None:
+    # V11's top-level `chains` array must survive the F5 removal untouched.
+    report_with_chains = {
+        **REPORT_OK,
+        "chains": [
+            {
+                "title": "Info leak -> leaked token -> auth bypass = account takeover",
+                "finding_ids": ["f_t_routes_sqli_1_1", "f_other_2"],
+                "severity": "high",
+                "narrative": "The leak exposes a token the auth check accepts verbatim.",
+            }
+        ],
+    }
+    errors = validate_schema(report_with_chains, SCHEMAS / "report.schema.json")
+    assert errors == [], errors

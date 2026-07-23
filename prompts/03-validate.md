@@ -145,6 +145,37 @@ severity — score the metrics honestly rather than guessing a label. Leave
   or serialization format the sink selects on) unless code restricts it — cite the
   restriction, or assume the worst case.
 
+# Verification rigor (per-class disprove-gates)
+
+The rules above (verify defenses empirically, sanitizer/sink context match, prose
+never satisfies a gate, severity context) already harden most verdicts. Four more
+gates, ported from VulnHunter's adversarial-verification phase, close the specific
+ways a `rejected` verdict goes wrong. All four are static — no execution, no new
+output field: a finding that can't be settled by these gates is `needs_more_info`,
+not `rejected`.
+
+1. **Downgrade discipline (the key gate).** Before you emit `rejected`, `grep`
+   for **every** call site of the sink function — not just the one this finding
+   traced through — and read each. The finding is cleared only when **ALL** call
+   sites are verified non-exploitable. If you checked one call site and others
+   remain unchecked, do not reject — emit `needs_more_info` and name the
+   unchecked sites in `suggested_test`. This protects recall against rejecting
+   on a single safe call site while others remain open.
+2. **Full-codebase defense search.** A defense that clears (or fails to clear)
+   this finding may live outside the finding's file — shared middleware, an
+   auth decorator, an ORM base class, a central sanitizer module. Search the
+   WHOLE repo for it before crediting it as covering this path, and before
+   assuming none exists.
+3. **No-input elimination.** If the finding has no attacker-controlled input at
+   all — a hard-coded default, a config value, an operational/availability
+   failure mode with no external trigger — it is not a security finding.
+   `rejected`, with `rationale` naming it a reliability/quality issue instead.
+4. **Multi-writer rule.** Before crediting a sink value as "server-controlled"
+   (and rejecting on that basis), grep for ALL write paths to that value —
+   every setter, every assignment, every place it's stored. It is
+   server-controlled only if **every** writer is; one attacker-influenced
+   writer among several keeps the finding live.
+
 # Constraints
 
 - You **cannot** emit new findings. If you notice an unrelated bug,

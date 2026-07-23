@@ -61,22 +61,6 @@
           "description": { "type": "string" }
         }
       }
-    },
-    "exploitability": {
-      "type": "object",
-      "description": "Static exploitability analysis, produced when reachable=true (ported from ai-proofscan's static exploitability analysis). Advisory only — never overrides the finding's CVSS-derived severity (V4), which remains authoritative.",
-      "additionalProperties": false,
-      "properties": {
-        "vector":              { "type": "integer", "enum": [0, 1, 2] },
-        "reachability_score":  { "type": "integer", "enum": [0, 1, 2] },
-        "sanitizer_bypass":    { "type": "integer", "enum": [0, 1, 2] },
-        "impact":              { "type": "integer", "enum": [0, 1, 2] },
-        "chaining":            { "type": "integer", "enum": [0, 1, 2] },
-        "severity_assessment": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW", "NOT-A-BUG"] },
-        "needs_poc":           { "type": "boolean", "description": "True when static reasoning alone cannot settle exploitability (e.g. depends on runtime config/state); false when source reading alone settles it." },
-        "attack_input":        { "type": "string", "description": "Concrete attacker-controlled value/payload that would trigger the sink (a static sketch, NOT executed)." },
-        "narrative":           { "type": "string", "description": "Short exploitability narrative grounded in file:line evidence." }
-      }
     }
   }
 }

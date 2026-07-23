@@ -25,8 +25,7 @@ the individual findings (their per-finding severity is already authoritative).
       "severity": "medium",
       "cvss_vector": "CVSS:3.1/...",     // when present
       "cvss_rating": "Medium",           // when present
-      "description": "...",
-      "exploitability": { ...Trace's static exploitability note... }  // when present
+      "description": "..."
     }
   ],
   "design_controls": [ { "kind": "...", "location": "...", "description": "..." } ],
@@ -55,7 +54,7 @@ fence.
 
 1. **Understand each finding's primitive** — what does it give an attacker
    (read a secret, reach an internal service, control a value, bypass a gate)?
-   Use the `exploitability` note and CVSS vector when present.
+   Use the CVSS vector when present.
 2. **Compose them.** A chain exists only when one finding's primitive genuinely
    unlocks or amplifies another. Representative Python attack paths:
    - **SSRF → internal service → unsafe deserialization = RCE** (a request-

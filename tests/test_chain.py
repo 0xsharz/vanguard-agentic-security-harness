@@ -191,7 +191,7 @@ async def test_run_chain_stores_and_returns_count(tmp_path: Path, monkeypatch) -
     assert "design_controls" in ui
 
 
-async def test_run_chain_user_input_carries_cvss_and_exploitability(
+async def test_run_chain_user_input_carries_cvss_vector(
     tmp_path: Path, monkeypatch
 ) -> None:
     import vash.stages._common as common_mod
@@ -211,8 +211,7 @@ async def test_run_chain_user_input_carries_cvss_and_exploitability(
                         "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
                         "cvss_rating": "Critical"},
             trace={"finding_id": "f_cvss_1", "reachable": True, "confidence": 0.9,
-                   "rationale": "reachable", "entry_points": [], "call_chain": [],
-                   "exploitability": {"impact": 2, "narrative": "leads to RCE"}},
+                   "rationale": "reachable", "entry_points": [], "call_chain": []},
         )
         _seed_confirmed_reachable(db, "r1", "f_plain_2")
         await chain_mod.run_chain(_ctx(tmp_path), db)
@@ -222,10 +221,8 @@ async def test_run_chain_user_input_carries_cvss_and_exploitability(
     by_id = {f["finding_id"]: f for f in ui["findings"]}
     assert by_id["f_cvss_1"]["cvss_vector"].startswith("CVSS:3.1/")
     assert by_id["f_cvss_1"]["cvss_rating"] == "Critical"
-    assert by_id["f_cvss_1"]["exploitability"]["narrative"] == "leads to RCE"
-    # A finding with no CVSS/exploitability simply omits those keys.
+    # A finding with no CVSS simply omits those keys.
     assert "cvss_vector" not in by_id["f_plain_2"]
-    assert "exploitability" not in by_id["f_plain_2"]
     assert ui["design_controls"][0]["kind"] == "authn"
 
 

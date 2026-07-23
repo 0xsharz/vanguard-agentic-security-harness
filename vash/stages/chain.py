@@ -26,11 +26,10 @@ from vash.stages._common import StageContext
 log = logging.getLogger(__name__)
 
 
-def _compact_finding(f: Finding, trace: dict | None) -> dict:
+def _compact_finding(f: Finding) -> dict:
     """A compact per-finding view for the chain agent. The chain references
     findings by ``finding_id`` (stable), NOT by list position. CVSS
-    vector/rating (V4) and Trace's static ``exploitability`` note (F5) are
-    included only when present."""
+    vector/rating (V4) are included only when present."""
     vj = f.validation_json or {}
     out: dict = {
         "finding_id": f.finding_id,
@@ -44,8 +43,6 @@ def _compact_finding(f: Finding, trace: dict | None) -> dict:
         out["cvss_vector"] = vj["cvss_vector"]
     if vj.get("cvss_rating"):
         out["cvss_rating"] = vj["cvss_rating"]
-    if isinstance(trace, dict) and isinstance(trace.get("exploitability"), dict):
-        out["exploitability"] = trace["exploitability"]
     return out
 
 
@@ -53,14 +50,14 @@ async def run_chain(ctx: StageContext, db: StateDB) -> int:
     """Construct multi-step exploit chains across all confirmed, canonical,
     reachable findings. Returns the number of chains constructed (0 when the
     stage skips or fails)."""
-    # Reuse Report's finding selection: confirmed + canonical + reachable, each
-    # paired with its Trace (for the exploitability note). Chains need >=2.
+    # Reuse Report's finding selection: confirmed + canonical + reachable.
+    # Chains need >=2.
     reachable = db.get_reachable_canonical_findings(ctx.run_id)
     if len(reachable) < 2:
         log.info("[%s] chain: <2 findings, skipping", ctx.run_id)
         return 0
 
-    findings = [_compact_finding(f, trace) for f, trace in reachable]
+    findings = [_compact_finding(f) for f, _trace in reachable]
     recon = db.get_recon_output(ctx.run_id) or {}
     sc = ctx.stage("chain")
     user_input = {

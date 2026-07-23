@@ -59,20 +59,6 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
      name the safer API, mention the input validation. Avoid vague
      "validate user input" advice.
    - `variants`: list other member finding_ids from the dedupe group.
-   - `needs_poc` / `exploitability_note`: if the finding's `trace` carries
-     an `exploitability` block, copy its `needs_poc` verbatim into
-     `needs_poc`, and combine its `narrative` (+ `attack_input`, if
-     present) into `exploitability_note`. If `trace` carries no
-     `exploitability` block, omit both fields entirely — do not invent
-     them.
-     - When `needs_poc` is `true`, the finding's `description` or
-       `exploitability_note` MUST mark it **"confirmed_static · needs
-       PoC"** — never assert certain exploitability for it. This is the
-       project's Tier-3 honesty rule.
-     - Never let `exploitability.severity_assessment` change `severity`:
-       the finding's CVSS-derived `severity` (from Validate/V4) is
-       authoritative; the exploitability assessment is advisory context
-       only.
 2. Aggregate `summary.total` and `summary.by_severity` counts.
 3. Validate the JSON against `schemas/report.schema.json` mentally
    before emitting. If a previous turn told you the output failed

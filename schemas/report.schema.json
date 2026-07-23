@@ -99,14 +99,6 @@
             "items": { "type": "string" },
             "description": "Other finding_ids in the same dedupe group."
           },
-          "needs_poc": {
-            "type": "boolean",
-            "description": "Carried from trace.exploitability.needs_poc, when present. True means static reasoning alone could not settle exploitability — the report must present this finding as confirmed_static / needs PoC, never as certain."
-          },
-          "exploitability_note": {
-            "type": "string",
-            "description": "Carried from trace.exploitability (narrative + attack_input), when present. Advisory context only — does not affect `severity`, which is CVSS-derived (V4) and authoritative."
-          },
           "recommendation": { "type": "string", "minLength": 20 }
         }
       }
