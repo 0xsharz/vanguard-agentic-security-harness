@@ -40,6 +40,10 @@ stages:
     concurrency: 1
     tools: [Read, Grep, Glob]
     repair_attempts: 2
+  chain:
+    model: claude-sonnet-4-6        # report/grade tier — one synthesis pass
+    concurrency: 1
+    tools: [Read, Grep, Glob]       # read-only; never executes target code
   report:
     model: claude-sonnet-4-6
     concurrency: 1

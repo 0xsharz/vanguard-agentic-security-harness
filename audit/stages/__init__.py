@@ -8,6 +8,7 @@ from audit.stages.gapfill import run_gapfill
 from audit.stages.dedupe import run_dedupe
 from audit.stages.trace import run_trace
 from audit.stages.feedback import run_feedback
+from audit.stages.chain import run_chain
 from audit.stages.report import run_report
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "run_dedupe",
     "run_trace",
     "run_feedback",
+    "run_chain",
     "run_report",
 ]

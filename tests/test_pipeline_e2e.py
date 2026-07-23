@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import audit.stages._common as common_mod
+import audit.stages.chain as chain_mod
 import audit.stages.dedupe as dedupe_mod
 import audit.stages.feedback as feedback_mod
 import audit.stages.gapfill as gapfill_mod
@@ -37,7 +38,7 @@ GROUP_ID = "g_web_sqli_1"
 
 STAGE_MODULES = (
     recon_mod, hunt_mod, validate_mod, gapfill_mod,
-    dedupe_mod, trace_mod, feedback_mod, report_mod,
+    dedupe_mod, trace_mod, feedback_mod, chain_mod, report_mod,
 )
 
 # Canned per-stage payloads. recon/hunt/validate are the exact shapes
@@ -135,9 +136,16 @@ CANNED: dict[str, dict] = {
     },
     # feedback_output.schema.json requires new_hunt_tasks. Empty list
     # makes the orchestrator skip the post-Trace Hunt/Validate/Dedupe/
-    # Trace re-run and go straight to Report.
+    # Trace re-run and go straight to Chain/Report.
     "feedback": {
         "new_hunt_tasks": [],
+    },
+    # chain.schema.json (V11). This fixture has a single canonical finding, so
+    # run_chain skips (needs >=2) before the agent — but a canned reply is
+    # provided so the stub also works if the finding count ever changes.
+    "chain": {
+        "summary": "No multi-step exploit chains identified.",
+        "chains": [],
     },
     # report.schema.json — the final document. run_id/target must match
     # what run_pipeline was invoked with (report.py writes this payload

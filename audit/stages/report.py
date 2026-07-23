@@ -27,8 +27,12 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
 
     sc = ctx.stage("report")
     target = {"repo_path": str(ctx.repo_path)}
+    # V11: surface any exploit chains the Chain stage constructed. Read-only
+    # pass-through — chains carry their own severity; per-finding severities
+    # (CVSS/V4) are untouched.
+    chains = (db.get_chain_analysis(ctx.run_id) or {}).get("chains") or []
     user_input = {"run_id": ctx.run_id, "target": target, "ready_findings": ready,
-                  **ctx.extras()}
+                  "chains": chains, **ctx.extras()}
 
     out_path = ctx.results_dir("report") / "report.json"
 
@@ -65,7 +69,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     except (AgentRunError, TransientAgentError) as e:
         log.error("[%s] report agent failed: %s — emitting fallback report",
                   ctx.run_id, e)
-        fallback = _build_fallback_report(ctx, db, reachable, target)
+        fallback = _build_fallback_report(ctx, db, reachable, target, chains)
         _attach_input_inventory(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(fallback, indent=2))
         return out_path
@@ -114,7 +118,8 @@ def _group_members_excluding(db: StateDB, run_id: str, group_id: str,
 
 
 def _build_fallback_report(ctx: StageContext, db: StateDB,
-                           reachable, target: dict) -> dict:
+                           reachable, target: dict,
+                           chains: list | None = None) -> dict:
     by_sev: dict[str, int] = {}
     findings_out = []
     for f, trace in reachable:
@@ -136,9 +141,12 @@ def _build_fallback_report(ctx: StageContext, db: StateDB,
             },
             "recommendation": "Review the sink and add input validation / use a safe API.",
         })
-    return {
+    report = {
         "run_id": ctx.run_id,
         "target": target,
         "summary": {"total": len(findings_out), "by_severity": by_sev},
         "findings": findings_out,
     }
+    if chains:
+        report["chains"] = chains
+    return report

@@ -78,6 +78,23 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
    before emitting. If a previous turn told you the output failed
    validation with specific errors, fix only those errors.
 
+# Exploit chains (V11)
+
+The input may carry a `chains` array — multi-step exploit chains the Chain stage
+constructed, each combining **two or more findings** into an attack path more
+dangerous than any single bug (e.g. "SSRF → internal service → unsafe
+deserialization = RCE"). Each chain has a `title`, its `finding_ids` (the stable
+ids of the findings it composes, in exploitation order), its OWN `severity`
+(critical|high|medium|low|info), an optional `blocked_by_controls`, and a
+`narrative`.
+
+If `chains` is present and non-empty, include it as a top-level `chains` array in
+your output, copying each chain's `title`, `finding_ids`, `severity`,
+`blocked_by_controls` (when present), and `narrative` verbatim. Do **not**
+invent chains, and do **not** let a chain's severity change any individual
+finding's `severity` — the per-finding severity (CVSS-derived, V4) stays
+authoritative. If `chains` is absent or empty, omit the `chains` array entirely.
+
 # Resolved input inventory (completeness artifact)
 
 The report also carries an `input_inventory` array — the resolved completeness

@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS traces (
     FOREIGN KEY (finding_id) REFERENCES findings(finding_id)
 );
 
+CREATE TABLE IF NOT EXISTS chains (
+    run_id TEXT PRIMARY KEY,
+    raw_json TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+);
+
 CREATE TABLE IF NOT EXISTS dedupe_groups (
     group_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
@@ -494,6 +500,24 @@ class StateDB:
             if tr and tr.get("reachable"):
                 out.append((f, tr))
         return out
+
+    # ---------- chains (V11: exploit-chain construction) ----------
+
+    def add_chain_analysis(self, run_id: str, payload: dict) -> None:
+        """Store the chain-analysis artifact for a run (one per run). The
+        chains carry their OWN severity; this does NOT touch per-finding
+        severities — V4's CVSS stays per-finding authoritative."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO chains (run_id, raw_json) VALUES (?, ?)",
+            (run_id, json.dumps(payload)),
+        )
+        self._conn.commit()
+
+    def get_chain_analysis(self, run_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT raw_json FROM chains WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return json.loads(row["raw_json"]) if row else None
 
     # ---------- dedupe ----------
 

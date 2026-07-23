@@ -524,7 +524,14 @@ async def run_pipeline(
             _budget_check(f"feedback-trace(iter={i})")
             await stages.run_trace(ctx, db)
 
-        # ---- Stage 8: Report ----
+        # ---- Stage 8: Chain (V11) — construct multi-step exploit chains ----
+        # One read-only pass over ALL confirmed canonical findings. Chains carry
+        # their own severity; per-finding CVSS (V4) stays authoritative. Fail-
+        # soft inside run_chain — never aborts the run.
+        _budget_check("chain")
+        await stages.run_chain(ctx, db)
+
+        # ---- Stage 9: Report ----
         _budget_check("report")
         report_path = await stages.run_report(ctx, db)
 

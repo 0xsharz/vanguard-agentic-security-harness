@@ -111,6 +111,22 @@
         }
       }
     },
+    "chains": {
+      "type": "array",
+      "description": "Multi-step exploit chains (V11) — combinations of >=2 findings more dangerous than any single bug. Each chain carries its OWN severity; per-finding severities are unchanged (CVSS/V4 stays authoritative). Injected from the run state by report.py.",
+      "items": {
+        "type": "object",
+        "required": ["title", "finding_ids", "severity", "narrative"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string" },
+          "finding_ids": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "blocked_by_controls": { "type": "array", "items": { "type": "string" } },
+          "narrative": { "type": "string" }
+        }
+      }
+    },
     "input_inventory": {
       "type": "array",
       "description": "Resolved completeness ledger — every attacker-controllable input Recon enumerated, each with its reconciled disposition (covered|uncovered). Injected from the run state by report.py; a completeness artifact, not a per-finding record.",
