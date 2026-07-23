@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import audit.baselines as baselines_mod
-from audit.baselines import (
+import vash.baselines as baselines_mod
+from vash.baselines import (
     _BASELINES,
     _baseline_block,
     _repo_kind,

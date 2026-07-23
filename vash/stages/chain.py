@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import logging
 
-from audit.runner import AgentRunError, TransientAgentError, run_agent
-from audit.state import Finding, StateDB
-from audit.stages._common import StageContext
+from vash.runner import AgentRunError, TransientAgentError, run_agent
+from vash.state import Finding, StateDB
+from vash.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from audit.runner import AgentRunError, TransientAgentError, run_agent
-from audit.state import Finding, StateDB
-from audit.stages._common import StageContext, truncated_recon_summary
+from vash.runner import AgentRunError, TransientAgentError, run_agent
+from vash.state import Finding, StateDB
+from vash.stages._common import StageContext, truncated_recon_summary
 
 log = logging.getLogger(__name__)
 

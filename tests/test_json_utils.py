@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from audit.json_utils import extract_json
+from vash.json_utils import extract_json
 
 
 def test_plain_json() -> None:

@@ -6,7 +6,7 @@ from upstream graphify schema drift (REQ-GRA-002) and exposes an
 AST-only backend (REQ-GRA-003) with a grep fallback (REQ-GRA-006).
 
 Public surface:
-    from audit.graph import build_or_load, GraphQuery, load_graph
+    from vash.graph import build_or_load, GraphQuery, load_graph
 """
 
 from __future__ import annotations

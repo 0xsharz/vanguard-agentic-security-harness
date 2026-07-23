@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from audit.cvss import rating, score
+from vash.cvss import rating, score
 
 # FIRST.org worked example: full-impact, network, no-privilege, no-UI bug.
 CRITICAL_VECTOR = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"

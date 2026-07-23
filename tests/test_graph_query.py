@@ -20,17 +20,17 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-from audit.graph import GRAPHIFY_VERSION_RANGE, GraphQuery, build_or_load, load_graph
-from audit.graph.build import _content_hash, build_graph
-from audit.graph.config import (
+from vash.graph import GRAPHIFY_VERSION_RANGE, GraphQuery, build_or_load, load_graph
+from vash.graph.build import _content_hash, build_graph
+from vash.graph.config import (
     CLOUD_LLM_ENV_VARS,
     cache_dir_for_repo,
     check_backend_isolation,
     graph_path_for_repo,
     language_for_path,
 )
-from audit.graph.fallback import _enclosing_symbol, build_fallback_graph, grep_callers_of
-from audit.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
+from vash.graph.fallback import _enclosing_symbol, build_fallback_graph, grep_callers_of
+from vash.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
 
 
 PY_FIXTURE = REPO_ROOT / "tests" / "graph_fixtures" / "python"
@@ -148,7 +148,7 @@ def test_content_hash_is_order_independent(tmp_path, monkeypatch):
     rglob (filesystem) order, so two identical repos could hash differently on
     different filesystems -> spurious cache invalidation, defeating REQ-GRA-005.
     The hash must not depend on file iteration order."""
-    import audit.graph.build as buildmod
+    import vash.graph.build as buildmod
     (tmp_path / "a.py").write_text("x = 1\n")
     (tmp_path / "b.py").write_text("y = 2\n")
     a, b = tmp_path / "a.py", tmp_path / "b.py"
@@ -206,7 +206,7 @@ def test_normalizer_skips_non_code_nodes():
     /comment/rationale). The normalizer passed unknown kinds through verbatim,
     polluting god_nodes/counts and risking prose in graph.json. Non-code kinds
     must be skipped; code nodes kept."""
-    from audit.graph.build import _iter_normalized_graphify_entities
+    from vash.graph.build import _iter_normalized_graphify_entities
     raw = {"nodes": [
         {"id": "a_foo", "label": "foo()", "source_file": "a.py",
          "source_location": "L1", "kind": "function", "name": "foo"},

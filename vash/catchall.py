@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from audit.partition import partition_files
+from vash.partition import partition_files
 
 # ---------------------------------------------------------------------------
 # Ported verbatim from VVAH s3_decompose.py:

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from audit.baselines import classify_and_baseline
-from audit.runner import run_agent
-from audit.state import StateDB
-from audit.stages._common import StageContext
+from vash.baselines import classify_and_baseline
+from vash.runner import run_agent
+from vash.state import StateDB
+from vash.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 

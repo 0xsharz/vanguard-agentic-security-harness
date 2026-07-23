@@ -21,13 +21,13 @@ from pathlib import Path
 
 import pytest
 
-import audit.stages.chain as chain_mod
-import audit.stages.report as report_mod
-from audit.config import load_config
-from audit.json_utils import validate_schema
-from audit.runner import AgentRunError, AgentResult
-from audit.stages._common import StageContext
-from audit.state import StateDB
+import vash.stages.chain as chain_mod
+import vash.stages.report as report_mod
+from vash.config import load_config
+from vash.json_utils import validate_schema
+from vash.runner import AgentRunError, AgentResult
+from vash.stages._common import StageContext
+from vash.state import StateDB
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 
@@ -168,7 +168,7 @@ def _ctx(tmp_path: Path) -> StageContext:
 
 
 async def test_run_chain_stores_and_returns_count(tmp_path: Path, monkeypatch) -> None:
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
     captured: list[dict] = []
     monkeypatch.setattr(chain_mod, "run_agent",
@@ -194,7 +194,7 @@ async def test_run_chain_stores_and_returns_count(tmp_path: Path, monkeypatch) -
 async def test_run_chain_user_input_carries_cvss_and_exploitability(
     tmp_path: Path, monkeypatch
 ) -> None:
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
     captured: list[dict] = []
     monkeypatch.setattr(chain_mod, "run_agent",
@@ -250,7 +250,7 @@ async def test_run_chain_skips_with_fewer_than_two(tmp_path: Path, monkeypatch) 
 
 
 async def test_run_chain_failsoft_on_agent_error(tmp_path: Path, monkeypatch) -> None:
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
 
     async def failing(**_kwargs):
@@ -277,7 +277,7 @@ async def test_run_chain_failsoft_on_agent_error(tmp_path: Path, monkeypatch) ->
 
 
 async def test_report_passes_chains_into_user_input(tmp_path: Path, monkeypatch) -> None:
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
     captured: list[dict] = []
     # A schema-valid report payload so run_report writes it out cleanly.
@@ -301,7 +301,7 @@ async def test_report_passes_chains_into_user_input(tmp_path: Path, monkeypatch)
 
 async def test_report_fallback_includes_chains(tmp_path: Path, monkeypatch) -> None:
     import json
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
 
     async def failing(**_kwargs):

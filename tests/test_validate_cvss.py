@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-import audit.stages._common as common_mod
-import audit.stages.validate as validate_mod
-from audit.config import load_config
-from audit.runner import AgentResult
-from audit.stages._common import StageContext
-from audit.stages.validate import _severity_from_cvss_rating, run_validate
-from audit.state import StateDB
+import vash.stages._common as common_mod
+import vash.stages.validate as validate_mod
+from vash.config import load_config
+from vash.runner import AgentResult
+from vash.stages._common import StageContext
+from vash.stages.validate import _severity_from_cvss_rating, run_validate
+from vash.state import StateDB
 
 RUN_ID = "r1"
 TASK_ID = "t_1"

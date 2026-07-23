@@ -15,20 +15,20 @@ from pathlib import Path
 
 import pytest
 
-import audit.stages._common as common_mod
-import audit.stages.chain as chain_mod
-import audit.stages.dedupe as dedupe_mod
-import audit.stages.feedback as feedback_mod
-import audit.stages.gapfill as gapfill_mod
-import audit.stages.hunt as hunt_mod
-import audit.stages.recon as recon_mod
-import audit.stages.report as report_mod
-import audit.stages.trace as trace_mod
-import audit.stages.validate as validate_mod
-from audit.config import load_config
-from audit.orchestrator import run_pipeline
-from audit.runner import AgentResult
-from audit.state import StateDB
+import vash.stages._common as common_mod
+import vash.stages.chain as chain_mod
+import vash.stages.dedupe as dedupe_mod
+import vash.stages.feedback as feedback_mod
+import vash.stages.gapfill as gapfill_mod
+import vash.stages.hunt as hunt_mod
+import vash.stages.recon as recon_mod
+import vash.stages.report as report_mod
+import vash.stages.trace as trace_mod
+import vash.stages.validate as validate_mod
+from vash.config import load_config
+from vash.orchestrator import run_pipeline
+from vash.runner import AgentResult
+from vash.state import StateDB
 
 FIXTURE_REPO = (Path(__file__).parent / "fixtures" / "vulnerable_app").resolve()
 RUN_ID = "test_e2e_run"

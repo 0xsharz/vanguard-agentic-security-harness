@@ -29,13 +29,13 @@ from pathlib import Path
 
 import pytest
 
-import audit.graph as graph_mod
-import audit.stages.validate as validate_mod
-from audit.config import load_config
-from audit.json_utils import validate_schema
-from audit.runner import AgentResult
-from audit.stages._common import StageContext, truncated_recon_summary
-from audit.state import StateDB
+import vash.graph as graph_mod
+import vash.stages.validate as validate_mod
+from vash.config import load_config
+from vash.json_utils import validate_schema
+from vash.runner import AgentResult
+from vash.stages._common import StageContext, truncated_recon_summary
+from vash.state import StateDB
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"

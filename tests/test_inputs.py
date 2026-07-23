@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from audit.json_utils import validate_schema
-from audit.state import StateDB
+from vash.json_utils import validate_schema
+from vash.state import StateDB
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 

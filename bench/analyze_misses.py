@@ -55,7 +55,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from audit.state import open_db
+from vash.state import open_db
 from bench.config import AUDIT_REPO_ROOT, AUDIT_STATE_DB, GROUND_TRUTH_DIR, WORK_DIR, atomic_write_json
 from bench.scorer import finding_matches_cve, score_corpus
 

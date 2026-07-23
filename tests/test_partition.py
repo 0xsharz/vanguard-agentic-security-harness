@@ -17,10 +17,10 @@ written, no graphify call, no network.
 
 from __future__ import annotations
 
-from audit.catchall import build_catchall_tasks
-from audit.graph.query import GraphQuery
-from audit.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
-from audit.partition import partition_files
+from vash.catchall import build_catchall_tasks
+from vash.graph.query import GraphQuery
+from vash.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
+from vash.partition import partition_files
 
 # ---- hand-built graph helpers (mirrors test_sink_backward.py) -------------
 

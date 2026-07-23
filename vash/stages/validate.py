@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from audit.cvss import rating as cvss_rating, score as cvss_score
-from audit.graph_context import neighbors_for_finding
-from audit.runner import AgentRunError, TransientAgentError, run_agent
-from audit.state import Finding, StateDB
-from audit.stages._common import StageContext
+from vash.cvss import rating as cvss_rating, score as cvss_score
+from vash.graph_context import neighbors_for_finding
+from vash.runner import AgentRunError, TransientAgentError, run_agent
+from vash.state import Finding, StateDB
+from vash.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 

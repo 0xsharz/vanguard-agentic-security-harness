@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from audit.graph.build import _content_hash, build_graph
-from audit.graph.config import iter_source_files
-from audit.graph.fallback import build_fallback_graph
+from vash.graph.build import _content_hash, build_graph
+from vash.graph.config import iter_source_files
+from vash.graph.fallback import build_fallback_graph
 
 
 def test_iter_skips_excluded_dirs(tmp_path):
@@ -178,7 +178,7 @@ def test_graphify_parallel_defaults_to_sequential_on_darwin(monkeypatch):
     defaulting to sequential on Darwin.
     """
     import sys as _sys
-    from audit.graph.build import _graphify_parallel
+    from vash.graph.build import _graphify_parallel
 
     monkeypatch.delenv("GRAPHIFY_PARALLEL", raising=False)
     monkeypatch.setattr(_sys, "platform", "darwin")

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from audit.config import HarnessConfig, StageConfig
-from audit.stages._common import StageContext
+from vash.config import HarnessConfig, StageConfig
+from vash.stages._common import StageContext
 
 
 def _ctx(**kwargs) -> StageContext:

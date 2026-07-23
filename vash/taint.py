@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # avoid import cost / any cycle — used only for type hints
-    from audit.graph.query import GraphQuery
+    from vash.graph.query import GraphQuery
 
 
 # ---------------------------------------------------------------------------

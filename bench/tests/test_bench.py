@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from audit.state import StateDB
+from vash.state import StateDB
 from bench import parse_results, scorer
 from bench.audit_cmd import build_scan_command
 from bench.clone import parse_source_url, target_dir_name
@@ -541,7 +541,7 @@ def test_load_detected_findings_rejects_bad_prefer():
 def test_build_scan_command_constructs_real_audit_run_invocation():
     cmd = build_scan_command("/tmp/clones/target_abcd1234", "bench_target_abcd1234",
                               max_cost_usd=5.0)
-    assert cmd == ["audit", "run", "--repo", "/tmp/clones/target_abcd1234",
+    assert cmd == ["vash", "run", "--repo", "/tmp/clones/target_abcd1234",
                    "--run-id", "bench_target_abcd1234", "--max-cost-usd", "5.0"]
 
 

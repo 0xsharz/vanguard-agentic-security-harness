@@ -9,15 +9,15 @@ import logging
 import os
 from pathlib import Path
 
-from audit import stages
-from audit.catchall import build_catchall_tasks
-from audit.config import HarnessConfig
-from audit.graph import GraphQuery, build_or_load
-from audit.runner import QuotaExhaustedError
-from audit.specialists import active_specialists, build_specialist_tasks
-from audit.state import StateDB, Task
-from audit.stages._common import StageContext
-from audit.taint import build_sink_backward_tasks, build_taint_tasks
+from vash import stages
+from vash.catchall import build_catchall_tasks
+from vash.config import HarnessConfig
+from vash.graph import GraphQuery, build_or_load
+from vash.runner import QuotaExhaustedError
+from vash.specialists import active_specialists, build_specialist_tasks
+from vash.state import StateDB, Task
+from vash.stages._common import StageContext
+from vash.taint import build_sink_backward_tasks, build_taint_tasks
 
 log = logging.getLogger(__name__)
 

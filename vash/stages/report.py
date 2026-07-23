@@ -6,10 +6,10 @@ import json
 import logging
 from pathlib import Path
 
-from audit.redact import redact_json
-from audit.runner import AgentRunError, TransientAgentError, run_agent
-from audit.state import StateDB
-from audit.stages._common import StageContext
+from vash.redact import redact_json
+from vash.runner import AgentRunError, TransientAgentError, run_agent
+from vash.state import StateDB
+from vash.stages._common import StageContext
 
 log = logging.getLogger(__name__)
 

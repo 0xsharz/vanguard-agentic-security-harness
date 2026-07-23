@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from audit.lang.hints import SPECIALIST_HINTS, is_iac_file
+from vash.lang.hints import SPECIALIST_HINTS, is_iac_file
 
 log = logging.getLogger(__name__)
 

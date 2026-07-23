@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pytest
 
-import audit.orchestrator as orch
-import audit.stages._common as common_mod
-from audit.catchall import _catchall_eligible, build_catchall_tasks
-from audit.config import load_config
-from audit.json_utils import validate_schema
-from audit.orchestrator import _add_catchall_tasks
-from audit.state import StateDB
-from audit.stages._common import StageContext
+import vash.orchestrator as orch
+import vash.stages._common as common_mod
+from vash.catchall import _catchall_eligible, build_catchall_tasks
+from vash.config import load_config
+from vash.json_utils import validate_schema
+from vash.orchestrator import _add_catchall_tasks
+from vash.state import StateDB
+from vash.stages._common import StageContext
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HUNT_TASK_SCHEMA = REPO_ROOT / "schemas" / "hunt_task.schema.json"

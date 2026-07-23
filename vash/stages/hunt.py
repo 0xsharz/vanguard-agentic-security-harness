@@ -6,16 +6,16 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
-from audit.graph_context import neighbors_for_files
-from audit.lang.hints import detect_languages, hints_for
-from audit.runner import (
+from vash.graph_context import neighbors_for_files
+from vash.lang.hints import detect_languages, hints_for
+from vash.runner import (
     AgentRunError,
     QuotaExhaustedError,
     TransientAgentError,
     run_agent,
 )
-from audit.state import StateDB, Task
-from audit.stages._common import StageContext, truncated_recon_summary
+from vash.state import StateDB, Task
+from vash.stages._common import StageContext, truncated_recon_summary
 
 log = logging.getLogger(__name__)
 

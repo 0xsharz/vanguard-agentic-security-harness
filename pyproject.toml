@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "audit"
+name = "vash"
 version = "0.1.0"
 description = "Cloudflare-style 8-stage vulnerability discovery audit agent driven by Claude Code subscription auth"
 readme = "README.md"
@@ -27,10 +27,10 @@ dev = [
 ]
 
 [project.scripts]
-audit = "audit.cli:main"
+vash = "vash.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["audit*"]
+include = ["vash*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

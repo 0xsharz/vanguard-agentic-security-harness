@@ -27,8 +27,8 @@ import json
 
 import pytest
 
-from audit import redact as R
-from audit.redact import (
+from vash import redact as R
+from vash.redact import (
     redact,
     redact_counts,
     redact_tree,
@@ -708,8 +708,8 @@ def test_build_fallback_report_evidence_is_maskable_by_redact_json():
     redact_json — not just a shape lookalike."""
     from types import SimpleNamespace
 
-    from audit.state import Finding
-    from audit.stages.report import _build_fallback_report
+    from vash.state import Finding
+    from vash.stages.report import _build_fallback_report
 
     finding = Finding(
         finding_id="f1", task_id="t1", run_id="test_run",

@@ -18,7 +18,7 @@ These lock the weakness classes that were previously under-covered so a future
 refactor can't silently drop them. They assert the guidance TEXT is present —
 they do not (and cannot) assert detection quality.
 """
-from audit.lang.hints import SPECIALIST_HINTS, LANG_HINTS
+from vash.lang.hints import SPECIALIST_HINTS, LANG_HINTS
 
 
 def test_logic_bug_covers_indexof_sentinel_idiom():

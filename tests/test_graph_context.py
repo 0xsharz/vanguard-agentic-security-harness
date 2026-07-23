@@ -16,16 +16,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import audit.graph as graph_mod
-import audit.stages.hunt as hunt_mod
-import audit.stages.validate as validate_mod
-from audit.config import load_config
-from audit.graph.query import GraphQuery
-from audit.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
-from audit.graph_context import neighbors_for_files, neighbors_for_finding
-from audit.runner import AgentResult
-from audit.stages._common import StageContext
-from audit.state import StateDB
+import vash.graph as graph_mod
+import vash.stages.hunt as hunt_mod
+import vash.stages.validate as validate_mod
+from vash.config import load_config
+from vash.graph.query import GraphQuery
+from vash.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
+from vash.graph_context import neighbors_for_files, neighbors_for_finding
+from vash.runner import AgentResult
+from vash.stages._common import StageContext
+from vash.state import StateDB
 
 
 # ---- hand-built graph helpers (same convention as tests/test_taint.py) ----
@@ -188,7 +188,7 @@ def test_stage_context_graph_uses_default_cache_path_when_unset(tmp_path: Path, 
     """When graph_cache_path is unset, graph() falls back to work_dir('graph')/graph.json
     and stores that path back onto the context."""
     monkeypatch.setattr(graph_mod, "build_or_load", lambda root, cache: _ab_doc())
-    import audit.stages._common as common_mod
+    import vash.stages._common as common_mod
     monkeypatch.setattr(common_mod, "WORK", tmp_path / "work")
     ctx = StageContext(run_id="r", repo_path=tmp_path, config=load_config())
     assert ctx.graph_cache_path is None

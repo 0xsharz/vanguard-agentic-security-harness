@@ -18,14 +18,14 @@ from pathlib import Path
 
 import pytest
 
-import audit.orchestrator as orch
-import audit.stages._common as common_mod
-import audit.stages.hunt as hunt_mod
-from audit.config import load_config
-from audit.json_utils import validate_schema
-from audit.lang.hints import SPECIALIST_HINTS, hints_for, is_iac_file
-from audit.orchestrator import _add_specialist_tasks
-from audit.specialists import (
+import vash.orchestrator as orch
+import vash.stages._common as common_mod
+import vash.stages.hunt as hunt_mod
+from vash.config import load_config
+from vash.json_utils import validate_schema
+from vash.lang.hints import SPECIALIST_HINTS, hints_for, is_iac_file
+from vash.orchestrator import _add_specialist_tasks
+from vash.specialists import (
     _BATCH_ETL_RX,
     _CRYPTO_RX,
     _DESER_RX,
@@ -35,8 +35,8 @@ from audit.specialists import (
     active_specialists,
     build_specialist_tasks,
 )
-from audit.state import StateDB, Task
-from audit.stages._common import StageContext
+from vash.state import StateDB, Task
+from vash.stages._common import StageContext
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HUNT_TASK_SCHEMA = REPO_ROOT / "schemas" / "hunt_task.schema.json"
@@ -163,7 +163,7 @@ def test_batch_surface_off_when_absent(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# iac gate: is_iac_file (reused from audit.lang.hints — not re-authored here)
+# iac gate: is_iac_file (reused from vash.lang.hints — not re-authored here)
 # ---------------------------------------------------------------------------
 
 

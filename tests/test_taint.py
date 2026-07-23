@@ -16,16 +16,16 @@ from pathlib import Path
 
 import pytest
 
-import audit.orchestrator as orch
-import audit.stages._common as common_mod
-from audit.config import load_config
-from audit.graph.query import GraphQuery
-from audit.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
-from audit.json_utils import validate_schema
-from audit.orchestrator import _add_taint_tasks
-from audit.state import StateDB
-from audit.stages._common import StageContext
-from audit.taint import (
+import vash.orchestrator as orch
+import vash.stages._common as common_mod
+from vash.config import load_config
+from vash.graph.query import GraphQuery
+from vash.graph.schema import SCHEMA_VERSION, Edge, GraphDocument, Node
+from vash.json_utils import validate_schema
+from vash.orchestrator import _add_taint_tasks
+from vash.state import StateDB
+from vash.stages._common import StageContext
+from vash.taint import (
     PYTHON_SINKS,
     build_taint_tasks,
     find_sinks,

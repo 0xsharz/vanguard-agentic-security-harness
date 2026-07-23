@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from audit.state import StateDB
+from vash.state import StateDB
 
 
 def _mk_result(usd: float, in_tok: int, out_tok: int, duration_ms: int,

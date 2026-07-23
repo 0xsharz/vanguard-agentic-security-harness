@@ -34,7 +34,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from audit.json_utils import extract_json, validate_schema
+from vash.json_utils import extract_json, validate_schema
 
 log = logging.getLogger(__name__)
 

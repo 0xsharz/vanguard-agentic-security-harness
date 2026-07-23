@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from audit import auth as auth_mod
-from audit.auth import AuthError, configure_auth
+from vash import auth as auth_mod
+from vash.auth import AuthError, configure_auth
 
 
 def _empty_env(tmp_path: Path) -> Path:

@@ -40,7 +40,7 @@ import fnmatch
 import re
 from pathlib import Path
 
-from audit.lang.hints import detect_languages
+from vash.lang.hints import detect_languages
 
 
 # ─────────────────────────────────────────────────────────────────────────────

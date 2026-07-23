@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from audit.runner import (
+from vash.runner import (
     QuotaExhaustedError,
     TransientAgentError,
     _classify_api_error,

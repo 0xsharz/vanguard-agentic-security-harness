@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from audit.config import HarnessConfig, StageConfig
+from vash.config import HarnessConfig, StageConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -46,7 +46,7 @@ class StageContext:
             return self._graph
         self._graph_loaded = True
         try:
-            from audit.graph import GraphQuery, build_or_load
+            from vash.graph import GraphQuery, build_or_load
             cache = self.graph_cache_path or (self.work_dir("graph") / "graph.json")
             doc = build_or_load(self.repo_path, cache)
             self.graph_cache_path = cache

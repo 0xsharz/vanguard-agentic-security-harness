@@ -25,7 +25,7 @@ def build_scan_command(
     """Construct the argv for `audit run` (or `python -m audit run`) against
     one cloned benchmark target. Pure function — no subprocess, no I/O.
     """
-    cmd = (["audit"] if not python_module else ["python", "-m", "audit"])
+    cmd = (["vash"] if not python_module else ["python", "-m", "vash"])
     cmd += ["run", "--repo", clone_dir, "--run-id", run_id]
     if resume:
         cmd.append("--resume")

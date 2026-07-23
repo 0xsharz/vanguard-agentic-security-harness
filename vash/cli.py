@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
-from audit.auth import AuthError, configure_auth
+from vash.auth import AuthError, configure_auth
 
 
 def _allow_api_key_from_env_or_flag(flag: bool) -> bool:
@@ -24,10 +24,10 @@ def _allow_api_key_from_env_or_flag(flag: bool) -> bool:
     if flag:
         return True
     return os.environ.get("AUDIT_ALLOW_API_KEY", "").strip() not in ("", "0", "false", "False")
-from audit.config import load_config
-from audit.orchestrator import CostExceeded, run_pipeline
-from audit.redact import redact_json
-from audit.state import StateDB
+from vash.config import load_config
+from vash.orchestrator import CostExceeded, run_pipeline
+from vash.redact import redact_json
+from vash.state import StateDB
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = REPO_ROOT / "state.db"

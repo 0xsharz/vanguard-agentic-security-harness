@@ -64,12 +64,12 @@ claude setup-token
 echo "CLAUDE_CODE_OAUTH_TOKEN=<paste>" > .env
 
 # 3. Verify
-audit auth-check
+vash auth-check
 
 # 4. Run
-audit run --repo /path/to/target --run-id my-run
-audit status --run-id my-run
-audit report --run-id my-run --format md > report.md
+vash run --repo /path/to/target --run-id my-run
+vash status --run-id my-run
+vash report --run-id my-run --format md > report.md
 ```
 
 By default the agent uses **subscription billing** via your Claude.ai
@@ -108,8 +108,8 @@ export ANTHROPIC_MODEL="anthropic/claude-sonnet-4-6"
 #         ANTHROPIC_MODEL="google/gemini-2.5-pro"
 #         ANTHROPIC_MODEL="qwen/qwen3-coder-480b"
 
-audit auth-check                       # confirms "using LLM gateway at https://openrouter.ai/api"
-audit run --repo /path/to/target --run-id orun --max-cost-usd 30
+vash auth-check                       # confirms "using LLM gateway at https://openrouter.ai/api"
+vash run --repo /path/to/target --run-id orun --max-cost-usd 30
 ```
 
 Caveats:
@@ -146,7 +146,7 @@ A real production codebase can produce 15-50 Hunt tasks and 25+ findings to
 validate. At default concurrency this gets expensive. Flags to keep it sane:
 
 ```bash
-audit run --repo /path/to/target \
+vash run --repo /path/to/target \
   --max-concurrency 1 \           # one claude subprocess at a time
   --max-recon-tasks 15 \          # cap initial Hunt fanout
   --max-cost-usd 30               # abort cleanly if exceeded
@@ -164,7 +164,7 @@ a local PoC, Validate **rejects** findings that don't reproduce, and Trace
 remains available — these flags are opt-in.
 
 ```bash
-audit run --repo /path/to/target --run-id live \
+vash run --repo /path/to/target --run-id live \
   --max-concurrency 1 --max-cost-usd 30 \
   --target-url http://server.local:8888 \
   --target-creds email=admin@system.com \
@@ -187,7 +187,7 @@ notes are appended verbatim to every stage's user_input, and Recon / Hunt /
 Validate honor exclusions you list.
 
 ```bash
-audit run --repo /path/to/target --scope-notes target_scope.md
+vash run --repo /path/to/target --scope-notes target_scope.md
 ```
 
 Example `target_scope.md`:

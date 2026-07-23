@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from audit.config import load_config
+from vash.config import load_config
 
 
 def test_default_config_loads() -> None:

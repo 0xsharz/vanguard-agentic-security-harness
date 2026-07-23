@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from audit.json_utils import validate_schema
+from vash.json_utils import validate_schema
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 

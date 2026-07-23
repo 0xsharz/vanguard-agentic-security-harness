@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-import audit.orchestrator as orch
-from audit.config import load_config
-from audit.orchestrator import (
+import vash.orchestrator as orch
+from vash.config import load_config
+from vash.orchestrator import (
     RECONCILE_CAP,
     _classify_input,
     _default_attack_class,
@@ -22,8 +22,8 @@ from audit.orchestrator import (
     _reconcile_pass,
     _synthesize_reconcile_task,
 )
-from audit.state import StateDB, Task
-from audit.stages._common import StageContext
+from vash.state import StateDB, Task
+from vash.stages._common import StageContext
 
 
 def _task(task_id: str, scope_hint: str, target_files: list[str]) -> Task:

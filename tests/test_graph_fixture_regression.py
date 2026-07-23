@@ -50,7 +50,7 @@ def _normalize(doc_dict: dict) -> dict:
 
 @pytest.mark.parametrize("lang", ["python", "go"])
 def test_graph_fixture_matches_golden(lang):
-    from audit.graph.build import build_graph
+    from vash.graph.build import build_graph
 
     fixture_dir = FIXTURES / lang
     golden_path = fixture_dir / "golden.graph.json"
@@ -70,7 +70,7 @@ def test_graph_fixture_matches_golden(lang):
             f"golden was generated under backend={expected['backend']!r} but this "
             f"run produced backend={actual['backend']!r}. Regenerate the golden in "
             f"the intended env with: `python3 -c \"import json, sys; sys.path.insert(0,'.'); "
-            f"from audit.graph.build import build_graph; "
+            f"from vash.graph.build import build_graph; "
             f"d = build_graph('tests/graph_fixtures/{lang}').to_dict(); "
             f"d['generated_at']=''; d['content_hash']=''; d['root_dir']='tests/graph_fixtures/{lang}'; "
             f"json.dump(d, open('tests/graph_fixtures/{lang}/golden.graph.json','w'), "
