@@ -183,6 +183,12 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
             scope_notes=scope_notes,
         ))
         console.print(f"[green]done[/green] run_id={run_id} report={report}")
+        try:
+            _print_run_summary(db, run_id)
+        except Exception as e:
+            # fail-soft (4.3): the run already completed successfully above —
+            # a summary rendering bug must never turn that into a CLI failure.
+            console.print(f"[yellow]run summary print failed:[/yellow] {e}")
     except CostExceeded as e:
         console.print(f"[yellow]aborted[/yellow] {e}")
         sys.exit(3)
@@ -268,6 +274,41 @@ def _show_run_detail(db: StateDB, run_id: str) -> None:
     t.add_row("findings (reachable)", str(len(reachable)))
     t.add_row("total cost ($)", f"{db.total_cost(run_id):.4f}")
     console.print(t)
+
+
+def _print_run_summary(db: StateDB, run_id: str) -> None:
+    """Render the 4.3 observability run summary: a per-stage cost/latency/
+    calls table (+ TOTAL row), a findings line, and a tasks line. Pure
+    presentation over db.run_summary(run_id) — no new instrumentation."""
+    summary = db.run_summary(run_id)
+
+    t = Table(title=f"run summary — {run_id}", show_lines=False)
+    t.add_column("stage")
+    t.add_column("calls", justify="right")
+    t.add_column("cost ($)", justify="right")
+    t.add_column("duration (s)", justify="right")
+    for stage, s in summary["stages"].items():
+        t.add_row(stage, str(s["calls"]), f"{s['usd']:.4f}", f"{s['duration_ms'] / 1000:.1f}")
+    totals = summary["totals"]
+    t.add_row(
+        "TOTAL", str(totals["calls"]), f"{totals['usd']:.4f}",
+        f"{totals['duration_ms'] / 1000:.1f}", style="bold",
+    )
+    console.print(t)
+
+    f = summary["findings"]
+    by_sev = ", ".join(f"{k}: {v}" for k, v in f["by_severity"].items())
+    console.print(
+        f"[cyan]findings[/cyan]: {f['total']} total"
+        + (f" ({by_sev})" if by_sev else "")
+        + f" — canonical: {f['canonical']}"
+    )
+
+    tk = summary["tasks"]
+    by_src = ", ".join(f"{k}: {v}" for k, v in tk["by_source"].items())
+    console.print(
+        f"[cyan]tasks[/cyan]: {tk['total']} total" + (f" ({by_src})" if by_src else "")
+    )
 
 
 def _render_markdown_report(report: dict) -> str:

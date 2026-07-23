@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -543,6 +544,29 @@ async def run_pipeline(
             "[%s] pipeline complete: total cost $%.4f — report at %s",
             run_id, db.total_cost(run_id), report_path,
         )
+
+        # ---- Observability (4.3): per-stage cost/latency/token run summary ----
+        # Aggregates the SAME costs table every stage already populated via
+        # record_cost — no new instrumentation. Wrapped in its OWN try/except
+        # (fail-soft): a summary/emit bug must NEVER fail an otherwise-
+        # completed run — the report above is the primary deliverable.
+        try:
+            summary = db.run_summary(run_id)
+            summary_path = ctx.results_dir("report").parent / "run_summary.json"
+            summary_path.write_text(json.dumps(summary, indent=2))
+            for stage, s in summary["stages"].items():
+                log.info(
+                    "[%s] summary: %-10s $%.4f  %dms  %d calls",
+                    run_id, stage, s["usd"], s["duration_ms"], s["calls"],
+                )
+            totals = summary["totals"]
+            log.info(
+                "[%s] summary: %-10s $%.4f  %dms  %d calls",
+                run_id, "TOTAL", totals["usd"], totals["duration_ms"], totals["calls"],
+            )
+        except Exception as e:  # fail-soft — summary emit must never fail a completed run
+            log.warning("[%s] run summary emit failed (run still completed): %s", run_id, e)
+
         return report_path
 
     except CostExceeded as e:

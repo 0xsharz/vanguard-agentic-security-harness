@@ -574,6 +574,87 @@ class StateDB:
         ).fetchone()
         return float(row["total"]) if row else 0.0
 
+    _COST_AGG_SQL = """
+        COUNT(*) AS calls,
+        COALESCE(SUM(usd), 0) AS usd,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(duration_ms), 0) AS duration_ms
+    """
+
+    @staticmethod
+    def _row_to_cost_agg(r: sqlite3.Row) -> dict:
+        return {
+            "calls": r["calls"],
+            "usd": float(r["usd"]),
+            "input_tokens": int(r["input_tokens"]),
+            "output_tokens": int(r["output_tokens"]),
+            "cache_read_tokens": int(r["cache_read_tokens"]),
+            "cache_creation_tokens": int(r["cache_creation_tokens"]),
+            "duration_ms": int(r["duration_ms"]),
+        }
+
+    @staticmethod
+    def _sorted_counts(counts: dict) -> dict:
+        """Sort a {key: count} dict deterministically for stable JSON/log
+        output. None (e.g. an unvalidated finding's status) sorts last since
+        it isn't comparable to str."""
+        return dict(sorted(counts.items(), key=lambda kv: (kv[0] is None, kv[0])))
+
+    def run_summary(self, run_id: str) -> dict:
+        """Aggregate the `costs` table (per-stage + totals) plus
+        findings/tasks breakdowns into a single run summary dict (4.3
+        observability). Pure read — no new instrumentation; reuses
+        record_cost's costs table and get_findings/get_all_tasks.
+        Deterministic ordering (stage/severity/status/source keys sorted)."""
+        stage_rows = self._conn.execute(
+            f"SELECT stage, {self._COST_AGG_SQL} FROM costs WHERE run_id = ? "
+            "GROUP BY stage ORDER BY stage",
+            (run_id,),
+        ).fetchall()
+        stages = {r["stage"]: self._row_to_cost_agg(r) for r in stage_rows}
+
+        totals_row = self._conn.execute(
+            f"SELECT {self._COST_AGG_SQL} FROM costs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        totals = self._row_to_cost_agg(totals_row)
+
+        by_severity: dict[str, int] = {}
+        by_status: dict[str | None, int] = {}
+        canonical = 0
+        findings = self.get_findings(run_id)
+        for f in findings:
+            by_severity[f.severity] = by_severity.get(f.severity, 0) + 1
+            by_status[f.validation_status] = by_status.get(f.validation_status, 0) + 1
+            if f.is_canonical:
+                canonical += 1
+        findings_summary = {
+            "total": len(findings),
+            "by_severity": self._sorted_counts(by_severity),
+            "by_status": self._sorted_counts(by_status),
+            "canonical": canonical,
+        }
+
+        by_source: dict[str, int] = {}
+        tasks = self.get_all_tasks(run_id)
+        for t in tasks:
+            by_source[t.source] = by_source.get(t.source, 0) + 1
+        tasks_summary = {
+            "total": len(tasks),
+            "by_source": self._sorted_counts(by_source),
+        }
+
+        return {
+            "run_id": run_id,
+            "stages": stages,
+            "totals": totals,
+            "findings": findings_summary,
+            "tasks": tasks_summary,
+        }
+
     # ---------- artifacts ----------
 
     def add_artifact(

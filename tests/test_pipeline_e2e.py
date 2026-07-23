@@ -280,5 +280,20 @@ async def test_pipeline_runs_end_to_end(stub_agents, tmp_path) -> None:
             "recon", "hunt", "validate", "gapfill",
             "dedupe", "trace", "feedback", "report",
         }
+
+        # 5. 4.3 observability: a run_summary.json was emitted alongside the
+        # report (fail-soft emit at the end of run_pipeline), aggregating the
+        # costs table this stubbed run populated. Counts vary with how many
+        # extra Hunt/Validate passes reconcile triggers, so assert shape +
+        # cross-checks rather than exact per-stage numbers.
+        summary_path = report_path.parent.parent / "run_summary.json"
+        assert summary_path.exists()
+        summary_data = json.loads(summary_path.read_text())
+        assert summary_data["run_id"] == RUN_ID
+        assert summary_data["stages"]  # non-empty: every stage recorded cost
+        assert summary_data["totals"]["calls"] >= 1
+        assert summary_data["totals"]["usd"] == pytest.approx(db.total_cost(RUN_ID))
+        assert summary_data["findings"]["total"] >= 1
+        assert summary_data["tasks"]["total"] >= 1
     finally:
         db.close()
