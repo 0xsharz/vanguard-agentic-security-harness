@@ -96,8 +96,8 @@
           },
           "variants": {
             "type": "array",
-            "items": { "type": "string" },
-            "description": "Other finding_ids in the same dedupe group."
+            "items": { "type": ["string", "object"] },
+            "description": "Other findings in the same dedupe group ('Also at:'). The report agent's own output (validated here BEFORE report.py's post-hoc attach overwrites this field) may carry bare finding_id strings; the final, authoritative form report.py attaches from run state is a located object: {finding_id, file, line_start, line_end, vuln_class}."
           },
           "recommendation": { "type": "string", "minLength": 20 }
         }

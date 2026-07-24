@@ -75,6 +75,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         _attach_input_inventory(db, ctx.run_id, fallback)
         _attach_coverage(db, ctx.run_id, fallback)
         _attach_cwe(db, ctx.run_id, fallback)
+        _attach_variants(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(redact_json(fallback), indent=2))
         return out_path
 
@@ -92,6 +93,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # D4: backfill CWE onto each finding from run state so downstream consumers
     # (SARIF, benchmark scorers that class-match on CWE) don't see a bare finding.
     _attach_cwe(db, ctx.run_id, payload)
+    # A2: attach located deduped-sibling references (VVAH "Also at:" parity) —
+    # same authoritative post-hoc treatment as CWE/coverage/input-inventory above.
+    _attach_variants(db, ctx.run_id, payload)
     out_path.write_text(json.dumps(redact_json(payload), indent=2))
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
@@ -147,6 +151,24 @@ def _attach_cwe(db: StateDB, run_id: str, payload: dict) -> None:
         log.warning("[%s] cwe backfill failed: %s", run_id, e)
 
 
+def _attach_variants(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach located deduped-sibling references to each report finding (VVAH
+    DupLocation parity). A finding whose dedupe group has other members carries
+    them here as {finding_id, file, line_start, line_end, vuln_class} — rendered
+    "Also at:" — so co-located confirmed sites are visible WITHOUT inflating the
+    top-level findings count. Sourced from run state (authoritative), never left
+    to the agent. Fail-soft: variant disclosure must never break report emission."""
+    try:
+        fid_to_group = {f.finding_id: f.group_id
+                        for f in db.get_findings(run_id) if f.group_id}
+        for f in payload.get("findings", []):
+            gid = fid_to_group.get(f.get("finding_id"))
+            if gid:
+                f["variants"] = _group_members_excluding(db, run_id, gid, f.get("finding_id"))
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] variant attach failed: %s", run_id, e)
+
+
 def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
     """Attach a consolidated `coverage` object (4.7) to a report payload —
     reuses existing data rather than re-running any analysis:
@@ -183,12 +205,22 @@ def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
 
 
 def _group_members_excluding(db: StateDB, run_id: str, group_id: str,
-                             exclude: str) -> list[str]:
+                             exclude: str) -> list[dict]:
+    # VVAH DupLocation parity (s7_dedup.py::_attach_duplicates): a deduped
+    # sibling is demoted to a LOCATED reference, never dropped — carry
+    # file/line/class so the report can render "Also at:" and a location-aware
+    # consumer sees every co-located confirmed site.
     rows = db._conn.execute(  # type: ignore[attr-defined]
-        "SELECT finding_id FROM findings WHERE run_id = ? AND group_id = ? AND finding_id != ?",
+        "SELECT finding_id, file, line_start, line_end, vuln_class "
+        "FROM findings WHERE run_id = ? AND group_id = ? AND finding_id != ?",
         (run_id, group_id, exclude),
     ).fetchall()
-    return [r["finding_id"] for r in rows]
+    return [
+        {"finding_id": r["finding_id"], "file": r["file"],
+         "line_start": r["line_start"], "line_end": r["line_end"],
+         "vuln_class": r["vuln_class"]}
+        for r in rows
+    ]
 
 
 def _build_fallback_report(ctx: StageContext, db: StateDB,
