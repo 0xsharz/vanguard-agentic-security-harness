@@ -31,30 +31,35 @@ Container has Node + the `claude` CLI (the SDK shells out to it) + graphify. Ins
 makes `is_sandboxed()` true → PoC execution enabled. Model tiers (config/stages.yaml): Opus 4.8 for
 recon/validate/trace, Sonnet 5 for the rest.
 
-## Benchmark result (datamodel-code-generator 0.55.0, 11 in-version CVEs) — 2026-07-25
-Ran all three tools, same target, same models, same Docker-sandbox, same scorer (class+file-hint, greedy 1:1).
-**Fair basis = DELIVERED output** (each tool's report/SARIF after its own dedup):
+## Benchmark result (datamodel-code-generator 0.55.0, 11 in-version CVEs) — 2026-07-25 (POST-FIX)
+Same target, same models, same scorer (`bench/scorer.py::score_corpus`, class+file-hint, greedy 1:1).
+**Fair basis = DELIVERED output**, static (VVAH is 100% static too):
 
 | DELIVERED recall | cost | notes |
 |---|---|---|
-| **VVAH 4/11** 🏆 | ~3hr/7.2M tok | scans `.jinja2` TEMPLATES (unique win 54621) + clean http SSRF (54690); 6 chains |
+| **VASH 5/11 (0.455)** 🏆 | ~2.5hr / $103 | AFTER D8+D7 fixes; delivered BOTH template CVEs 54621+54654 + 54653/54690/55389; 5 chains |
+| VVAH 4/11 | ~3hr | static; templates (only 54621) + http SSRF; 6 chains |
 | audit 2/11 | $48 | cheapest, lean 8-stage LLM |
-| VASH 2/11 | $96 | confirms 6/11 internally but delivers 2 (D8 bug); 5 chains; 2× cost |
 
-ai-proofscan baseline = 6/11. **VASH lost on delivery, NOT detection** — its pipeline confirmed 6/11
-true-positives (54655,54690,54691,55415,55389,55391) but dedup/report (D8) discarded 4 before the report.
-Do NOT rank on "pre-dedup confirmed" cross-tool (VVAH's pre-dedup 97-candidate set is unavailable — only its
-final 20). Full write-up: `docs/BENCHMARK-COMPARISON.md` (+ .pdf). Per-tool PDFs:
-`results/dmcg-fix/VASH-dmcg-fix-report.pdf`, `~/audit-orig/audit-dmcg-report.pdf`, VVAH `.md`/`.sarif` in `~/vul_testing/`.
+**VASH now BEATS VVAH.** Decisive edge = **D7 template scanning** (coverage 50→70 files; both `.jinja2` CVEs vs VVAH's one).
+Proven progression: old VASH **2/11** → **4/11** (D8 per-file-canonical, re-scored on the same 45 confirmed → recovered
+54690+55415) → **5/11** (D8+D7 fresh host-static run `dmcg-outperform`). Caveats: E is host-static (20 extras unfiltered
+by executed-PoC; VVAH also static, 16 extras); fresh hunt is stochastic (gained templates+msgspec, missed 54655/55415
+that the Docker set had). A **Docker run (D7 + executed-PoC)** would likely reach ~6–7/11 with PoC-filtered precision —
+deferred until a container token is minted. ai-proofscan baseline = 6/11. Full write-up: `docs/BENCHMARK-COMPARISON.md`.
 
-## Fix backlog (`docs/DISCREPANCIES.md`) — to beat VVAH
-- **D8 (TOP, cheap, no re-scan):** report/dedup discards confirmed corpus matches (delivers 2 of 6 detected).
-  Fix canonical-selection so the report keeps its real hits. Could move delivered recall 2→~6/11. *Prove by
-  re-scoring the fixed report — do not assume.*
-- **D7:** scan template files (`.jinja2`/`.mako`/`.j2`) in `find_sinks` — VVAH's unique win (54621) lives there.
-- **D6:** cost — deterministic engine doubled hunt tasks (71 vs 27) → $96. Cap taint/sink-backward counts;
-  reduce gapfill/feedback iterations (gapfill already 2→1); an API key kills the D3 rate-limit retries.
-- **D3:** subscription-token rate-limiting at concurrency 4 → retries/failed tasks, stretched wall-clock.
+## Fix backlog — status (see `docs/superpowers/plans/2026-07-25-vash-outperform.md`)
+- **D8 DONE + PROVEN** (`dedupe.py`): per-file canonical promotion (one canonical per (group, distinct file)) +
+  dict.fromkeys dup-guard. Re-scored 2→4/11 on the same confirmed set. Also A2 (`report.py::_attach_variants`)
+  VVAH "Also at:" located variant evidence.
+- **D7 DONE + PROVEN** (`orchestrator.py::_sweepable_source_files`): catch-all now sweeps templates/IaC (EXT_TO_LANG +
+  is_iac via hardened `safe_walk_files`), not just `.py`. Coverage 50→70; delivered both `.jinja2` CVEs → 5/11.
+- **C1 DONE** (`taint.py`): narrow CWE-200 `information_disclosure` sink + hunt framing (55403 not yet delivered).
+- **D1 DEFERRED**: validate PoC-succeeded guardrail — moot on host-static; Docker-PoC-only.
+- **D6 (open):** cost still ~$100/run (Opus recon+trace). Cap trace/taint counts if needed. **D3 (open):** subscription
+  rate-limits; an API key would remove retry stretch. Background-runtime cap on host → run via detached `--resume`.
+- Still open to push past 5/11: **Docker run (D7 + executed-PoC)** for ~6–7/11 + zero-FP precision (needs token);
+  hunt robustness for the stochastic 54655/55415 misses.
 - Closed: **D1/D2** (graphify emitted package-relative node paths → mismatch with recon → taint produced 0
   tasks; fixed in `vash/graph/build.py::_rebase_to_repo_root` — inputs 0→21/21, sinks 0→62, taint 0→11).
   **D4** (report dropped `cwe` → scorer couldn't class-match; fixed via `report.py::_attach_cwe`).

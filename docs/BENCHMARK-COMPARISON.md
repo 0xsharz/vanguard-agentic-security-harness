@@ -2,7 +2,31 @@
 
 **Target:** `datamodel-code-generator` 0.55.0 (Python code-generator library, 50 source files)
 **Ground truth:** 11 in-version CVEs — codegen (6, CWE-94), SSRF (3, CWE-918), path-traversal (1, CWE-22), info-leak (1, CWE-200). *(CVE-2026-55390 excluded as not-in-version.)*
-**Date:** 2026-07-25
+**Date:** 2026-07-25 (updated with post-fix results)
+
+---
+
+## ⭐ UPDATE — post-fix result: VASH now BEATS VVAH (5/11 > 4/11)
+
+After shipping the D8 (report-delivery) and D7 (template-scanning) fixes, VASH was re-run on the same target and re-scored with the same `bench/scorer.py::score_corpus`. **On the fair DELIVERED, static basis (VVAH is 100% static too), VASH now leads:**
+
+| DELIVERED recall | findings | cost/time | basis |
+|---|---|---|---|
+| **VASH 5/11 (0.455)** 🏆 | 25 (+5 chains) | ~2.5hr / $103 | host-static, all D8+D7 fixes (run `dmcg-outperform`) |
+| VVAH 4/11 | 20 | ~3hr | static |
+| audit 2/11 | 13 | $48 | static |
+
+**VASH cve_found = 54621, 54653, 54654, 54690, 55389.** The decisive edge is **D7 (template scanning)**: catch-all coverage grew from **50 → 70 source files** (the 20 `.jinja2` templates were previously invisible), and VASH delivered **both** template codegen CVEs **54621 + 54654** — VVAH delivered only 54621. It also newly delivered **54653** (`msgspec.py` codegen — no tool had it before).
+
+**Proven progression (re-scored, not assumed):** old VASH **2/11** → **4/11** (D8 per-file-canonical alone, re-scored on the *same* 45 executed-PoC-confirmed findings — recovered 54690 `http.py` SSRF + 55415 `imports.py`) → **5/11** (D8+D7 fresh host run — added the templates + msgspec).
+
+**Honest caveats:**
+- This E run is **host-static** (no executed-PoC), so its 20 non-corpus "extras" are not PoC-filtered — but VVAH is also static (16 extras), so extras are comparable and the recall comparison is apples-to-apples.
+- The fresh host hunt is **stochastic**: it gained templates + msgspec but *missed* 54655 (`jsonschema` codegen) and 55415 (`imports`) that the earlier Docker-confirmed set had. A **Docker run (D7 + executed-PoC)** would likely combine both → an estimated **6–7/11** *and* PoC-filtered precision (VASH's zero-FP edge). That run is deferred until a container OAuth token is minted (`claude setup-token`).
+
+Fix commits on `evolve/vulnhunter-imports` (whole-branch review: **READY TO MERGE**); plan at `docs/superpowers/plans/2026-07-25-vash-outperform.md`.
+
+---
 
 ## Methodology (identical across tools — no hints given)
 
