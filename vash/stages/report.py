@@ -210,16 +210,30 @@ def _group_members_excluding(db: StateDB, run_id: str, group_id: str,
     # sibling is demoted to a LOCATED reference, never dropped — carry
     # file/line/class so the report can render "Also at:" and a location-aware
     # consumer sees every co-located confirmed site.
+    #
+    # D8 promotes one canonical PER FILE in a cross-file group, so a group can
+    # have MULTIPLE headline (canonical) findings. A sibling belongs in
+    # `exclude`'s variants only if it is genuinely demoted (is_canonical = 0)
+    # AND it is actually `exclude`'s demoted sibling rather than some OTHER
+    # canonical's: either it shares `exclude`'s file, or (the single-canonical
+    # case) no other canonical in the group claims its file at all. Without
+    # this, every headline in a multi-canonical group would list every OTHER
+    # headline's demoted duplicates too.
     rows = db._conn.execute(  # type: ignore[attr-defined]
-        "SELECT finding_id, file, line_start, line_end, vuln_class "
-        "FROM findings WHERE run_id = ? AND group_id = ? AND finding_id != ?",
-        (run_id, group_id, exclude),
+        "SELECT finding_id, file, line_start, line_end, vuln_class, is_canonical "
+        "FROM findings WHERE run_id = ? AND group_id = ?",
+        (run_id, group_id),
     ).fetchall()
+    exclude_file = next((r["file"] for r in rows if r["finding_id"] == exclude), None)
+    canonical_files = {r["file"] for r in rows if r["is_canonical"]}
     return [
         {"finding_id": r["finding_id"], "file": r["file"],
          "line_start": r["line_start"], "line_end": r["line_end"],
          "vuln_class": r["vuln_class"]}
         for r in rows
+        if r["finding_id"] != exclude
+        and not r["is_canonical"]
+        and (r["file"] == exclude_file or r["file"] not in canonical_files)
     ]
 
 

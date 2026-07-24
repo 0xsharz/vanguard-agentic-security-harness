@@ -513,12 +513,19 @@ def _render_markdown_report(report: dict) -> str:
         lines.append("")
         variants = f.get("variants") or []
         if variants:
-            locs = ", ".join(
-                f"`{v.get('file')}:{v.get('line_start')}`" if isinstance(v, dict)
-                else f"`{v}`"
-                for v in variants
-            )
-            lines.append(f"_Also at_: {locs}")
+            locs = []
+            for v in variants:
+                if isinstance(v, dict):
+                    # A located variant normally carries `file`; guard the
+                    # degenerate case (file is None) so we render the
+                    # finding_id instead of a bare "None:None".
+                    if v.get("file") is None:
+                        locs.append(f"`{v.get('finding_id')}`")
+                    else:
+                        locs.append(f"`{v.get('file')}:{v.get('line_start')}`")
+                else:
+                    locs.append(f"`{v}`")
+            lines.append(f"_Also at_: {', '.join(locs)}")
             lines.append("")
         lines.append("---")
         lines.append("")
