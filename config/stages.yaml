@@ -74,5 +74,5 @@ stages:
 
 # Bounded loops to prevent runaway cost
 loops:
-  gapfill_iterations: 2     # max Hunt → Validate → Gapfill cycles
+  gapfill_iterations: 1     # max Hunt → Validate → Gapfill cycles
   feedback_iterations: 1    # one feedback pass after Trace

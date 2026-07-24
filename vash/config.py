@@ -22,7 +22,7 @@ class StageConfig:
 @dataclass
 class HarnessConfig:
     stages: dict[str, StageConfig] = field(default_factory=dict)
-    gapfill_iterations: int = 2
+    gapfill_iterations: int = 1
     feedback_iterations: int = 1
 
     def get(self, stage: str) -> StageConfig:
@@ -65,6 +65,6 @@ def load_config(path: Path | None = None) -> HarnessConfig:
     loops = raw.get("loops", {}) or {}
     return HarnessConfig(
         stages=stages,
-        gapfill_iterations=int(loops.get("gapfill_iterations", 2)),
+        gapfill_iterations=int(loops.get("gapfill_iterations", 1)),
         feedback_iterations=int(loops.get("feedback_iterations", 1)),
     )

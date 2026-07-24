@@ -74,6 +74,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         fallback = _build_fallback_report(ctx, db, reachable, target, chains)
         _attach_input_inventory(db, ctx.run_id, fallback)
         _attach_coverage(db, ctx.run_id, fallback)
+        _attach_cwe(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(redact_json(fallback), indent=2))
         return out_path
 
@@ -88,6 +89,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # inventory above: sourced from run state, injected post-hoc, never
     # left to the agent to (mis)represent.
     _attach_coverage(db, ctx.run_id, payload)
+    # D4: backfill CWE onto each finding from run state so downstream consumers
+    # (SARIF, benchmark scorers that class-match on CWE) don't see a bare finding.
+    _attach_cwe(db, ctx.run_id, payload)
     out_path.write_text(json.dumps(redact_json(payload), indent=2))
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
@@ -113,6 +117,34 @@ def _attach_input_inventory(db: StateDB, run_id: str, payload: dict) -> None:
         for inp in db.get_inputs(run_id)
     ]
     payload["input_inventory"] = inventory
+
+
+# Fallback CWE by vuln class, used only when a finding carries no CWE of its own.
+_CLASS_CWE = {
+    "code_injection": "CWE-94", "codegen": "CWE-94", "ssti": "CWE-94", "logic_chain": "CWE-94",
+    "command_injection": "CWE-78", "ssrf": "CWE-918", "path_traversal": "CWE-22", "zip_slip": "CWE-22",
+    "sql_injection": "CWE-89", "xxe": "CWE-611", "deserialization": "CWE-502", "open_redirect": "CWE-601",
+    "xss_stored": "CWE-79", "xss_reflected": "CWE-79", "credential_leak": "CWE-200",
+    "information_disclosure": "CWE-200", "infoleak": "CWE-200", "header_injection": "CWE-113",
+    "race_condition": "CWE-362", "uncontrolled_recursion_resource_exhaustion": "CWE-674",
+    "denial_of_service": "CWE-400", "algorithmic_complexity_dos": "CWE-407",
+}
+
+
+def _attach_cwe(db: StateDB, run_id: str, payload: dict) -> None:
+    """Backfill a `cwe` onto each report finding (D4). The hunters already emit a
+    CWE (stored in the finding's raw_json); report findings were dropping it, so
+    CWE-class-matching scorers saw nothing. Prefer the finding's own CWE from run
+    state (by finding_id), else map from vuln_class. Fail-soft."""
+    try:
+        by_id = {f.finding_id: (f.raw_json or {}).get("cwe") for f in db.get_findings(run_id)}
+        for f in payload.get("findings", []):
+            if not f.get("cwe"):
+                cwe = by_id.get(f.get("finding_id")) or _CLASS_CWE.get(f.get("vuln_class"))
+                if cwe:
+                    f["cwe"] = cwe
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] cwe backfill failed: %s", run_id, e)
 
 
 def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
