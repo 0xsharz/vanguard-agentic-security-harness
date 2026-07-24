@@ -9,7 +9,7 @@ defaults:
 
 stages:
   recon:
-    model: claude-opus-4-8
+    model: claude-haiku-4-5-20251001
     concurrency: 1
     tools: [Read, Grep, Glob, Bash]  # Bash = read-only git history mining ONLY
     max_turns: 60                # recon can be long
@@ -23,20 +23,20 @@ stages:
     concurrency: 10
     tools: [Read, Grep, Glob]     # no Bash: pure analysis
   gapfill:
-    model: claude-sonnet-5
+    model: claude-haiku-4-5-20251001
     concurrency: 1
     tools: [Read, Grep, Glob]
     repair_attempts: 2
   dedupe:
-    model: claude-sonnet-5
+    model: claude-haiku-4-5-20251001
     concurrency: 1
     tools: [Read]
   trace:
-    model: claude-opus-4-8        # most critical stage
+    model: claude-sonnet-5        # most critical stage
     concurrency: 10
     tools: [Read, Grep, Glob, Bash]
   feedback:
-    model: claude-sonnet-5
+    model: claude-haiku-4-5-20251001
     concurrency: 1
     tools: [Read, Grep, Glob]     # no Bash: the sweep only greps
     repair_attempts: 2
