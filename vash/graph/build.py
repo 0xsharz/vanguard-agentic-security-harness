@@ -159,10 +159,23 @@ def _try_graphify_build(root: Path, content_hash: str) -> GraphDocument | None:
         log.warning("graph.build: graphify.extract raised %r; falling back.", exc)
         return None
 
+    # Root-relative real paths of the files graphify extracted. graphify may
+    # emit node ``source_file`` values relative to a package sub-root it
+    # detected (e.g. ``__init__.py`` for ``<root>/pkg/__init__.py``), which
+    # then mismatches recon's repo-root-relative locations and silently kills
+    # taint reachability (D1). We use this list to re-base node files back onto
+    # the repo root so recon, find_sinks and taint all agree on one path form.
+    code_rel: list[str] = []
+    for f in code_files:
+        try:
+            code_rel.append(str(Path(f).resolve().relative_to(root.resolve())))
+        except (OSError, ValueError):
+            code_rel.append(str(f))
+
     version = getattr(graphify, "__version__", None) or "unknown"
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
-    for entry in _iter_normalized_graphify_entities(raw_nodes, root):
+    for entry in _iter_normalized_graphify_entities(raw_nodes, root, code_rel):
         nodes[entry.id] = entry
     for edge in _iter_normalized_graphify_edges(raw_nodes):
         edges.append(edge)
@@ -231,7 +244,24 @@ def _iter_normalized_graphify_edges(raw):
         yield Edge(src=str(src), dst=str(dst), kind=kind)
 
 
-def _iter_normalized_graphify_entities(raw, root: Path):
+def _rebase_to_repo_root(rel_file: str, code_rel: list[str], code_rel_set: set[str]) -> str:
+    """Map a graphify node file (possibly package-sub-root-relative) onto the
+    repo-root-relative real path (D1 fix). Exact hit wins; else the shortest
+    real file that ends with ``/<rel_file>`` (closest to the repo root); else
+    if rel_file already carries an extra prefix, the longest real file it ends
+    with. Falls back to rel_file unchanged when nothing matches."""
+    if not code_rel or rel_file in code_rel_set:
+        return rel_file
+    fwd = [cr for cr in code_rel if cr.endswith("/" + rel_file)]
+    if fwd:
+        return min(fwd, key=len)
+    rev = [cr for cr in code_rel if rel_file.endswith("/" + cr)]
+    if rev:
+        return max(rev, key=len)
+    return rel_file
+
+
+def _iter_normalized_graphify_entities(raw, root: Path, code_rel: list[str] | None = None):
     """Normalize whatever graphify.extract() returns into VF Node objects.
 
     graphify 0.8.x returns a dict with ``nodes`` and ``edges`` keys. Each
@@ -282,6 +312,10 @@ def _iter_normalized_graphify_entities(raw, root: Path):
             rel_file = str(Path(raw_file).resolve().relative_to(root.resolve()))
         except (OSError, ValueError):
             rel_file = str(raw_file)
+        # D1: re-base graphify's (possibly package-relative) path onto the repo
+        # root so it matches recon locations + find_sinks' file reads.
+        if code_rel:
+            rel_file = _rebase_to_repo_root(rel_file, code_rel, set(code_rel))
 
         # If label ends with "()", it's a function; if the id is the module
         # itself (no underscore separator or label is a filename), it's a
