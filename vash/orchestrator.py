@@ -353,9 +353,9 @@ def _add_specialist_tasks(ctx: StageContext, db: StateDB) -> None:
 # low-confidence graph must not skip this step.
 # ---------------------------------------------------------------------------
 
-_SWEEP_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
-                    ".tox", ".mypy_cache", "dist", "build", ".eggs",
-                    ".pytest_cache", ".ruff_cache"}
+_SWEEP_SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__",
+                    "build", "dist", "vendor", "target", ".tox", ".mypy_cache",
+                    ".pytest_cache", ".ruff_cache", ".eggs"}
 
 
 def _sweepable_source_files(repo_path: Path, graph=None) -> list[str]:
@@ -371,20 +371,19 @@ def _sweepable_source_files(repo_path: Path, graph=None) -> list[str]:
     still bounds actual task count and discloses any drop)."""
     from pathlib import PurePosixPath
     from vash.lang.hints import EXT_TO_LANG, is_iac_file
+    from vash.graph.config import safe_walk_files
 
     def _sweepable(rel: str) -> bool:
         return PurePosixPath(rel).suffix.lower() in EXT_TO_LANG or is_iac_file(rel)
 
     disk: list[str] = []
-    for p in repo_path.rglob("*"):
-        if not p.is_file():
+    for p in safe_walk_files(repo_path, excluded_dir_parts=_SWEEP_SKIP_DIRS):
+        try:
+            rel = str(p.relative_to(repo_path))
+        except ValueError:
             continue
-        rel = p.relative_to(repo_path)
-        if any(part in _SWEEP_SKIP_DIRS for part in rel.parts):
-            continue
-        rels = str(rel)
-        if _sweepable(rels):
-            disk.append(rels)
+        if _sweepable(rel):
+            disk.append(rel)
             if len(disk) >= 20000:
                 break
     graph_src = [f for f in graph._by_file if _sweepable(f)] if graph is not None else []
