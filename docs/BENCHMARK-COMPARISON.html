@@ -1,0 +1,243 @@
+<!doctype html><html><head><meta charset='utf-8'><style>
+@page{size:A4;margin:14mm} *{box-sizing:border-box}
+body{font:12px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:#111827;max-width:100%}
+h1{font-size:22px;margin:0 0 4px;border-bottom:3px solid #111827;padding-bottom:6px}
+h2{font-size:16px;margin:18px 0 6px;color:#111827;border-bottom:1px solid #d1d5db;padding-bottom:3px}
+h3{font-size:13.5px;margin:12px 0 4px;color:#374151}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:11px}
+th,td{border:1px solid #d1d5db;padding:5px 8px;text-align:left}
+th{background:#f3f4f6;font-weight:600}
+tr:nth-child(even){background:#fafafa}
+code{background:#f3f4f6;padding:1px 4px;border-radius:3px;font-family:Menlo,monospace;font-size:10.5px}
+strong{color:#111827} em{color:#6b7280}
+ul{margin:4px 0 4px 18px} li{margin:2px 0}
+hr{border:none;border-top:1px solid #e5e7eb;margin:14px 0}
+</style></head><body><h1>VASH vs audit vs VVAH — Benchmark Comparison</h1>
+<p><strong>Target:</strong> <code>datamodel-code-generator</code> 0.55.0 (Python code-generator library, 50 source files)
+<strong>Ground truth:</strong> 11 in-version CVEs across 4 classes — codegen (6, CWE-94), SSRF (3, CWE-918), path-traversal (1, CWE-22), info-leak (1, CWE-200). <em>(A 12th CVE, CVE-2026-55390, is excluded as not-in-version.)</em>
+<strong>Date:</strong> 2026-07-25</p>
+<h2>Methodology (kept identical across tools — no hints given)</h2>
+<ul>
+<li><strong>Same target</strong> mounted read-only into each tool's container.</li>
+<li><strong>Same models:</strong> Opus 4.8 for recon / validate / trace; Sonnet 5 for hunt / gapfill / dedupe / feedback / chain / report. (audit's stale model IDs were bumped to match; its pipeline/prompts were left pristine.)</li>
+<li><strong>Same sandbox:</strong> each tool run in its own Docker container (execution isolated; PoCs run in-sandbox).</li>
+<li><strong>Same scorer:</strong> a finding matches a CVE when <code>class(finding) == class(CVE)</code> <strong>and</strong> any of the CVE's advisory file-hints is a substring of the finding's file path; greedy 1:1; in-version CVEs only. Class is taken from the finding's CWE when present, else mapped from its vuln-class.</li>
+<li><strong>Scoring basis:</strong> each tool's <strong>confirmed findings</strong> (validated true-positives) — the fair "detection capability" basis. VVAH is scored from its delivered SARIF; VASH/audit from their run DB. The "reported" row below shows each tool's <em>final report</em> after dedupe/trace filtering.</li>
+</ul>
+<h2>Scorecard</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th><strong>VASH</strong></th>
+<th><strong>audit</strong> (evilsocket)</th>
+<th><strong>VVAH</strong> (Visa)</th>
+<th>ai-proofscan (ref)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Recall — detected (confirmed)</strong></td>
+<td><strong>6/11 (55%)</strong></td>
+<td>4/11 (36%)</td>
+<td>4/11 (36%)</td>
+<td>6/11 (55%)</td>
+</tr>
+<tr>
+<td>Recall — final report</td>
+<td>2/11 ⚠️</td>
+<td>3/11</td>
+<td>4/11</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Unique CVEs (found by only this tool)</td>
+<td><strong>2</strong> (55415, 55391)</td>
+<td>0</td>
+<td>1 (54621)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Confirmed findings</td>
+<td>45</td>
+<td>21</td>
+<td>20</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Canonical / reported</td>
+<td>21</td>
+<td>13</td>
+<td>20</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Exploit chains</td>
+<td>5</td>
+<td>0</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Cost (USD)</strong></td>
+<td>$96.52</td>
+<td><strong>$47.94</strong></td>
+<td>(your run)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Wall-clock</td>
+<td>2.71 hr</td>
+<td>2.90 hr</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Pipeline</td>
+<td>9-stage + deterministic graph engine</td>
+<td>8-stage LLM</td>
+<td>agentic SAST, template-aware</td>
+<td>static-first</td>
+</tr>
+</tbody>
+</table>
+<h2>Per-CVE matrix (detection)</h2>
+<table>
+<thead>
+<tr>
+<th>CVE</th>
+<th>Class</th>
+<th>File hints</th>
+<th style="text-align: center;">VASH</th>
+<th style="text-align: center;">audit</th>
+<th style="text-align: center;">VVAH</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CVE-2026-54621</td>
+<td>codegen</td>
+<td>template, jinja2, UnionType</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;"><strong>✓</strong></td>
+</tr>
+<tr>
+<td>CVE-2026-54653</td>
+<td>codegen</td>
+<td>pydantic_base, dataclass, msgspec</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-54654</td>
+<td>codegen</td>
+<td>template, jinja2, TypeAlias, comment</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-54655</td>
+<td>codegen</td>
+<td>jsonschema</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>CVE-2026-54656</td>
+<td>codegen</td>
+<td>validator</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-54690</td>
+<td>ssrf</td>
+<td>http</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>CVE-2026-54691</td>
+<td>ssrf</td>
+<td>http, arguments, <strong>main</strong></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-55415</td>
+<td>codegen</td>
+<td>imports</td>
+<td style="text-align: center;"><strong>✓</strong></td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-55389</td>
+<td>traversal</td>
+<td>jsonschema</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>CVE-2026-55391</td>
+<td>ssrf</td>
+<td>http</td>
+<td style="text-align: center;"><strong>✓</strong></td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td>CVE-2026-55403</td>
+<td>infoleak</td>
+<td>http</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+<td style="text-align: center;">·</td>
+</tr>
+<tr>
+<td><strong>TOTAL</strong></td>
+<td></td>
+<td></td>
+<td style="text-align: center;"><strong>6/11</strong></td>
+<td style="text-align: center;"><strong>4/11</strong></td>
+<td style="text-align: center;"><strong>4/11</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Overlap:</strong> all three find the 3 "easy" <code>.py</code> CVEs (54655, 54690, 55389). Everything else is where the tools differ.
+<strong>Missed by all three:</strong> 54653, 54654, 54656 (codegen), 55403 (infoleak) — deeper template/model or http-header instances no tool reached.</p>
+<h2>Per-tool analysis</h2>
+<h3>VASH — best detector (6/11), but its report hides it</h3>
+<ul>
+<li>Ties the ai-proofscan baseline and <strong>finds 2 CVEs no other tool did</strong> — <code>55415</code> (codegen in <code>imports</code>) and <code>55391</code> (SSRF). Its deterministic taint + sink-backward engine (fed by a fixed call-graph) sweeps SSRF/codegen/traversal broadly, and it builds <strong>5 exploit chains</strong> (multi-step attack paths) neither competitor produces.</li>
+<li><strong>But</strong> its final report shows only 2/11: dedupe collapses each duplicate cluster to one "canonical" finding, and when the canonical it keeps sits in a <em>different</em> file than the advisory cites, the corpus match is dropped. <strong>The detection is real; the report loses it (fix D8).</strong></li>
+<li>Most expensive ($96) — the deterministic engine roughly doubles the hunt-task count (71 vs ~27). That buys the extra recall.</li>
+</ul>
+<h3>audit (evilsocket) — lean, cheap baseline (4/11 at half the cost)</h3>
+<ul>
+<li>Pure 8-stage LLM hunting, no deterministic engine, no chain stage. Matches VASH on the 4 easy/<code>.py</code> CVEs, finds nothing unique, and costs <strong>half</strong> ($48). Solid, economical, but leaves recall on the table (no template awareness, no graph-driven coverage).</li>
+</ul>
+<h3>VVAH (Visa) — template-aware (4/11), the only tool to catch a template CVE</h3>
+<ul>
+<li>Its unique win is <code>54621</code> — codegen injection <strong>inside a <code>.jinja2</code> template file</strong>. VVAH scans template files; VASH and audit scan only <code>.py</code>, so they can't see codegen instances that live in the templates. This is VVAH's real, transferable edge.</li>
+</ul>
+<h2>Actionable gaps for VASH (ranked)</h2>
+<ul>
+<li><strong>D8 (highest value, no re-scan) — report over-filtering.</strong> Dedupe keeps a canonical finding in a non-matching file, dropping 4 of 6 real corpus hits from the final report (6 detected → 2 reported). Fix the canonical-selection / carry all cluster members' locations into the report. Turns the <em>reported</em> number from 2/11 to 6/11 with zero extra scanning.</li>
+<li><strong>D7 — scan template files.</strong> Add <code>.jinja2</code>/<code>.mako</code>/<code>.j2</code> (and other codegen templates) to <code>find_sinks</code>; likely recovers <code>54621</code> and other template-resident codegen (VVAH's edge).</li>
+<li><strong>D6 — cost.</strong> The deterministic engine doubled tasks → $96. Cap taint/sink-backward task counts and reuse the graph across stages to cut cost toward audit's $48 without losing the 6/11 detection.</li>
+<li><strong>D3 — rate-limiting.</strong> Subscription-token throttling (concurrency 4) caused retries + failed tasks and stretched wall-clock; an API key or lower concurrency would speed + de-risk runs.</li>
+<li>(Closed this cycle: <strong>D1/D2</strong> graph path-mismatch that had disabled taint entirely; <strong>D4</strong> report missing CWE; <strong>D5</strong> was a false alarm — PoCs do execute.)</li>
+</ul>
+<h2>Bottom line</h2>
+<p>On <strong>detection capability</strong>, ranked: <strong>VASH 6/11 &gt; audit 4/11 = VVAH 4/11</strong>, with VASH tying the ai-proofscan baseline and uniquely catching 2 CVEs. VASH is the strongest <em>detector</em> but currently the most expensive, and a report-presentation bug (D8) masks its true recall. audit is the efficient baseline; VVAH's template-scanning is the one capability VASH should adopt. Fix D8 + D7 + cost and VASH is clearly ahead on the metric that matters.</p>
+<hr />
+<p><em>Artifacts: <code>~/vash/results/dmcg-fix/VASH-dmcg-fix-report.pdf</code> · <code>~/audit-orig/audit-dmcg-report.pdf</code> · <code>~/vul_testing/datamodel-code-generator-0.55.0_report.{md,sarif}</code> (VVAH).</em></p></body></html>
