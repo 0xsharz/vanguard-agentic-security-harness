@@ -128,6 +128,39 @@ def test_find_sinks_detects_and_classifies(tmp_path: Path) -> None:
     assert by_symbol["ev"] == {"code_injection"}
 
 
+def test_find_sinks_detects_information_disclosure(tmp_path: Path) -> None:
+    """CWE-200: a broad-except traceback print is an information_disclosure
+    sink; an unrelated plain assignment is not a sink at all."""
+    (tmp_path / "handler.py").write_text(
+        "import traceback\n"                                     # 1
+        "def fetch(x):\n"                                        # 2
+        "    try:\n"                                              # 3
+        "        return call(x)\n"                                # 4
+        "    except Exception:\n"                                 # 5
+        "        print(traceback.format_exc(), file=sys.stderr)\n"  # 6 -> information_disclosure
+        "def safe(x):\n"                                          # 7
+        "    x = 1\n"                                              # 8 -> no sink
+        "    return x\n"                                           # 9
+    )
+    doc = _doc(
+        [
+            _n("n_fetch", "fetch", "handler.py", 2),
+            _n("n_safe", "safe", "handler.py", 7),
+        ],
+        [],
+    )
+    gq = GraphQuery(doc, tmp_path)
+    sinks = find_sinks(tmp_path, gq)
+
+    name_of = {n.id: n.name for n in doc.nodes.values()}
+    by_symbol: dict[str, set[str]] = defaultdict(set)
+    for s in sinks:
+        by_symbol[name_of[s.symbol_id]].add(s.attack_class)
+
+    assert by_symbol["fetch"] == {"information_disclosure"}
+    assert "safe" not in by_symbol  # plain `x = 1` line is not a sink
+
+
 def test_find_sinks_skips_unresolved_symbol(tmp_path: Path) -> None:
     """A dangerous line whose enclosing symbol does not resolve is skipped."""
     (tmp_path / "m.py").write_text("os.system(x)\n")  # line 1, no def precedes

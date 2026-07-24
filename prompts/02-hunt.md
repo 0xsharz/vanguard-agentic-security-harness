@@ -114,6 +114,15 @@ appearing verbatim in the generated Python). Check the template files and the
 render/emit call sites, not just eval/exec. This is the SIGNATURE bug class of a
 code generator — prioritize it.
 
+# Information disclosure (CWE-200)
+A broad `except` (or `except Exception`) that prints, logs, returns, or string-formats a caught
+exception, a traceback (`traceback.format_exc()`/`print_exc()`), or an object's repr can leak
+secrets that object carries: connection/request objects embed headers (auth tokens), URLs embed
+credentials, config objects embed keys. Report a finding ONLY when a secret-bearing value is
+provably in scope of the printed/returned/logged expression (e.g. an HTTP request built with a
+user- or config-supplied `Authorization`/token header reachable from the except block). A bare
+`traceback.format_exc()` with no secret in scope is NOT a finding.
+
 # Method
 
 1. Read `target_files` end-to-end. Don't skim. Note imports, helpers,

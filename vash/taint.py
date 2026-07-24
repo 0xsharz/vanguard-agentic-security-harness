@@ -148,6 +148,18 @@ PYTHON_SINKS: dict[str, list[re.Pattern]] = {
             r"log(?:ging|ger)?\.(?:info|warning|warn|error|debug|critical|exception)\s*\([^)]*%",
         )
     ],
+    "information_disclosure": [
+        re.compile(p)
+        for p in (
+            # CWE-200: a broad-except handler that prints/formats a traceback can
+            # leak secrets carried by objects in scope — e.g. httpx's exception
+            # repr embeds the Request, including Authorization headers. NARROW net
+            # (traceback-print shape only, to avoid noise); the hunter confirms a
+            # secret is actually reachable in the printed expression.
+            r"traceback\.(?:format_exc|format_exception|print_exc)\s*\(",
+            r"\.format_exc\s*\(",
+        )
+    ],
 }
 
 
