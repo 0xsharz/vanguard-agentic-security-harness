@@ -60,11 +60,24 @@ async def run_dedupe(ctx: StageContext, db: StateDB) -> int:
     groups = result.payload.get("groups", [])
     db.record_cost(ctx.run_id, "dedupe", None, result.raw_result_message)
     db.add_artifact(ctx.run_id, "dedupe", None, "jsonl", str(result.artifact_path))
+    # D8: the dedupe agent picks ONE canonical per group. When a group spans
+    # files, that buries a confirmed match living in a different file than the
+    # canonical (it is never traced, never reported). Promote one canonical PER
+    # DISTINCT FILE so a co-located confirmed finding survives to trace/report.
+    # Deterministic, post-clustering. Safe: every promoted member is already
+    # `confirmed`, and trace.py independently re-verifies reachability before
+    # report.py includes it — this cannot surface an unconfirmed or dead finding.
+    fid_to_file = {f.finding_id: f.file for f in confirmed}
     for g in groups:
         db.add_dedupe_group(ctx.run_id, g)
         canonical = g["canonical_finding_id"]
+        files_seen = {fid_to_file.get(canonical)}
         for fid in g["member_finding_ids"]:
-            db.assign_finding_group(fid, g["group_id"], fid == canonical)
+            file = fid_to_file.get(fid)
+            is_canon = (fid == canonical) or (file is not None and file not in files_seen)
+            if is_canon:
+                files_seen.add(file)
+            db.assign_finding_group(fid, g["group_id"], is_canon)
 
     log.info("[%s] dedupe: %d findings → %d groups", ctx.run_id, len(confirmed), len(groups))
     return len(groups)
