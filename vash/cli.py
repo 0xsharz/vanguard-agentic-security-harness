@@ -511,8 +511,14 @@ def _render_markdown_report(report: dict) -> str:
             lines.append("")
         lines.append(f"**Recommendation**: {f['recommendation']}")
         lines.append("")
-        if f.get("variants"):
-            lines.append(f"_Variants_: {', '.join(f['variants'])}")
+        variants = f.get("variants") or []
+        if variants:
+            locs = ", ".join(
+                f"`{v.get('file')}:{v.get('line_start')}`" if isinstance(v, dict)
+                else f"`{v}`"
+                for v in variants
+            )
+            lines.append(f"_Also at_: {locs}")
             lines.append("")
         lines.append("---")
         lines.append("")
