@@ -100,6 +100,20 @@ ephemeral local servers) is fine.
 A single JSON object matching `schemas/finding.schema.json`. The shape
 is `{task_id, findings: [...], gaps_observed: [...]}`. No prose.
 
+# Code-generation targets (CWE-94 — do not miss this)
+
+If the target GENERATES code, config, SQL, or markup (jinja2/mako templates,
+`.render()`/`Template()`/`Environment()`, f-strings or `.format()` that build a
+source string, model/serializer emitters), treat it as a code-injection surface:
+untrusted input — schema field NAMES, type names, aliases, default values,
+docstrings, titles, `$ref`s — that flows into the generated output without
+escaping is **injected code** (CWE-94). Trace the untrusted value from the
+input/parser INTO the template variable or the built source string, and show
+what the attacker can emit (e.g. a field default of `x');__import__('os').system('...')`
+appearing verbatim in the generated Python). Check the template files and the
+render/emit call sites, not just eval/exec. This is the SIGNATURE bug class of a
+code generator — prioritize it.
+
 # Method
 
 1. Read `target_files` end-to-end. Don't skim. Note imports, helpers,

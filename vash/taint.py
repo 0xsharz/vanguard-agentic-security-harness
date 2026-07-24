@@ -61,6 +61,15 @@ PYTHON_SINKS: dict[str, list[re.Pattern]] = {
             r"\bcompile\s*\(",
             r"__import__\s*\(",
             r"types\.FunctionType\s*\(",
+            # Codegen / template injection (CWE-94) — a code generator that
+            # interpolates untrusted schema names/types/defaults into a jinja2
+            # template or a built-up source string emits injectable code. These
+            # render/Template calls are the codegen sink.
+            r"\.render\s*\(",
+            r"\bTemplate\s*\(",
+            r"\bEnvironment\s*\(",
+            r"\.from_string\s*\(",
+            r"\brender_template(?:_string)?\s*\(",
         )
     ],
     "deserialization": [
