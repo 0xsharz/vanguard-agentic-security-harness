@@ -136,6 +136,36 @@ def test_ineligible_uncovered_files_yield_no_tasks() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _sweepable_source_files — file-universe helper for _add_catchall_tasks (D7).
+#
+# Deny-by-default inclusion by extension (EXT_TO_LANG, covers .py AND
+# web-templates .jinja2/.j2/.mako) OR IaC/CI path (is_iac_file), mirroring
+# VVAH's s3_decompose.py::_is_source. Replaces the old .py-only allowlist
+# that made template codegen-injection (CWE-94 in *.jinja2) unreachable by
+# the coverage sweep.
+# ---------------------------------------------------------------------------
+
+
+def test_sweepable_source_files_includes_templates_and_skips_noise(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("x = 1\n")
+    (tmp_path / "pkg" / "tmpl").mkdir()
+    (tmp_path / "pkg" / "tmpl" / "x.jinja2").write_text("type X = Union['{{ n }}']\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("junk\n")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "a.cpython-311.pyc").write_text("junk\n")
+
+    from vash.orchestrator import _sweepable_source_files
+    files = _sweepable_source_files(tmp_path, None)
+
+    assert "pkg/a.py" in files            # .py still swept
+    assert "pkg/tmpl/x.jinja2" in files   # D7: template now enters the universe
+    assert not any(".git" in f for f in files)        # VCS noise skipped
+    assert not any("__pycache__" in f for f in files) # build noise skipped
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator wireup: _add_catchall_tasks — fail-open, graph-independent.
 # ---------------------------------------------------------------------------
 

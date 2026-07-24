@@ -353,6 +353,44 @@ def _add_specialist_tasks(ctx: StageContext, db: StateDB) -> None:
 # low-confidence graph must not skip this step.
 # ---------------------------------------------------------------------------
 
+_SWEEP_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                    ".tox", ".mypy_cache", "dist", "build", ".eggs",
+                    ".pytest_cache", ".ruff_cache"}
+
+
+def _sweepable_source_files(repo_path: Path, graph=None) -> list[str]:
+    """Repo-relative paths of every file the catch-all coverage sweep should
+    consider. Include any file whose extension maps to a known language
+    (`EXT_TO_LANG` — covers .py AND web-templates .jinja2/.j2/.mako, where
+    CWE-94 codegen injection lives) OR that is IaC/CI config (`is_iac_file`).
+    Mirrors VVAH s3_decompose.py::_is_source (deny-by-default by extension),
+    replacing the prior .py-only allowlist that made template files unreachable
+    by the coverage net (D7). Skips VCS/build/venv noise dirs. Unions the
+    on-disk result with graph-known files so nothing the graph modeled is lost.
+    Capped at 20000 files (coverage honesty: build_catchall_tasks' max_tasks cap
+    still bounds actual task count and discloses any drop)."""
+    from pathlib import PurePosixPath
+    from vash.lang.hints import EXT_TO_LANG, is_iac_file
+
+    def _sweepable(rel: str) -> bool:
+        return PurePosixPath(rel).suffix.lower() in EXT_TO_LANG or is_iac_file(rel)
+
+    disk: list[str] = []
+    for p in repo_path.rglob("*"):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(repo_path)
+        if any(part in _SWEEP_SKIP_DIRS for part in rel.parts):
+            continue
+        rels = str(rel)
+        if _sweepable(rels):
+            disk.append(rels)
+            if len(disk) >= 20000:
+                break
+    graph_src = [f for f in graph._by_file if _sweepable(f)] if graph is not None else []
+    return sorted(set(disk) | set(graph_src))
+
+
 def _add_catchall_tasks(ctx: StageContext, db: StateDB) -> None:
     """Queue LOW-priority catch-all Hunt tasks for every eligible source file
     not covered by any task queued so far in this run.
@@ -365,11 +403,11 @@ def _add_catchall_tasks(ctx: StageContext, db: StateDB) -> None:
     """
     try:
         gq = ctx.graph()
-        if gq is not None:
-            all_src = [f for f in gq._by_file if f.endswith(".py")]
-        else:
-            all_src = [str(p.relative_to(ctx.repo_path)) for p in
-                       list(ctx.repo_path.rglob("*.py"))[:5000]]
+        # D7: file universe = every sweepable file (source langs incl.
+        # web-templates, plus IaC/CI), not just .py. The .py-only allowlist that
+        # ran here made template codegen-injection (CWE-94 in *.jinja2)
+        # unreachable by the coverage net.
+        all_src = _sweepable_source_files(ctx.repo_path, gq)
         covered: set[str] = set()
         for t in db.get_all_tasks(ctx.run_id):
             covered.update(t.target_files)
