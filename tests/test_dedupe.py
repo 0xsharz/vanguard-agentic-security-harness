@@ -131,3 +131,46 @@ async def test_dedupe_single_file_group_keeps_one_canonical(
         assert canonical_ids == {"f_a2"}
     finally:
         db.close()
+
+
+async def test_dedupe_duplicate_member_id_does_not_rebury(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If the dedupe agent emits a duplicate finding id within one group's
+    member_finding_ids, the per-file promotion loop is stateful (files_seen),
+    so a naive second pass over the repeated id would recompute is_canonical
+    as False and — via last-write-wins assign_finding_group — silently
+    re-bury an already-promoted finding. run_dedupe must de-dup member ids
+    (preserving first-occurrence order) before promoting, so the repeated
+    file-B id does not clobber its own canonical=True."""
+    import vash.stages._common as common_mod
+    monkeypatch.setattr(common_mod, "RESULTS", tmp_path / "results")
+
+    db = StateDB(tmp_path / "state.db")
+    try:
+        db.create_run(str(tmp_path), "r1")
+        _seed_confirmed(db, "r1", "f_a1", "pkg/a.py")
+        _seed_confirmed(db, "r1", "f_a2", "pkg/a.py")
+        _seed_confirmed(db, "r1", "f_b1", "pkg/b.py")
+
+        group = {
+            "group_id": "g_1",
+            "root_cause": "Unescaped string concatenation into SQL query builder.",
+            "canonical_finding_id": "f_a1",
+            # f_b1 appears twice — the LLM output is untrusted and the schema
+            # does not enforce uniqueness.
+            "member_finding_ids": ["f_a1", "f_b1", "f_b1", "f_a2"],
+        }
+        monkeypatch.setattr(dedupe_mod, "run_agent",
+                            _fake_run_agent_factory({"groups": [group]}))
+
+        n = await dedupe_mod.run_dedupe(_ctx(tmp_path), db)
+        assert n == 1
+
+        canonical_ids = {f.finding_id for f in db.get_findings("r1", canonical_only=True)}
+        assert "f_a1" in canonical_ids       # the LLM's canonical stays canonical
+        assert "f_b1" in canonical_ids       # repeated id must NOT be re-buried
+        assert "f_a2" not in canonical_ids   # second file-A member stays non-canonical
+        assert canonical_ids == {"f_a1", "f_b1"}
+    finally:
+        db.close()

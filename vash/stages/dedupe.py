@@ -72,7 +72,11 @@ async def run_dedupe(ctx: StageContext, db: StateDB) -> int:
         db.add_dedupe_group(ctx.run_id, g)
         canonical = g["canonical_finding_id"]
         files_seen = {fid_to_file.get(canonical)}
-        for fid in g["member_finding_ids"]:
+        # De-dup member ids first: the per-file promotion below is stateful
+        # (files_seen), so a repeated id would recompute is_canonical on its
+        # second pass and, via last-write-wins assign_finding_group, could
+        # re-bury an already-promoted finding. dict.fromkeys preserves order.
+        for fid in dict.fromkeys(g["member_finding_ids"]):
             file = fid_to_file.get(fid)
             is_canon = (fid == canonical) or (file is not None and file not in files_seen)
             if is_canon:
