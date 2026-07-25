@@ -58,6 +58,10 @@ A single "find bugs in this code" prompt produces noise. VASH instead runs a dis
 
 VASH maps the repository into a call-graph, fans out many narrowly-scoped hunters, adversarially validates each finding, proves reachability, and (optionally) confirms by execution — then writes the report.
 
+<p align="center">
+  <img src="docs/pipeline.svg" alt="The VASH pipeline: recon → hunt → validate → gapfill → dedupe → trace → feedback → chain → report, with a feedback loop from feedback back to hunt, all running over a deterministic AST call-graph spine that feeds taint analysis and sink-backward hunting." width="100%">
+</p>
+
 | # | Stage | Tier | Purpose |
 |---|---|---|---|
 | 1 | **Recon** | Opus | Map the repo; emit narrowly-scoped hunt tasks + a completeness inventory of every untrusted input. |
