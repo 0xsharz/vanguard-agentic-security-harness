@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vash.config import HarnessConfig, StageConfig
+
+if TYPE_CHECKING:
+    from vash.progress import RunReporter
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -23,6 +27,14 @@ class StageContext:
     # Optional operator context — when set, downstream prompts use them.
     live_target: dict | None = None    # {"url": "...", "credentials": {...}}
     scope_notes: str | None = None     # verbatim text appended to user_input
+    # F1: resolved once per run by sandbox.resolve_execution() (dynamic_validation
+    # flag AND an active sandbox/dev-escape) — the actual precondition threaded
+    # down to run_agent()'s Bash gate. Default False = static-only.
+    execution_enabled: bool = False
+    # F2 (Task 2): optional rich run-progress reporter. Presentation-only and
+    # fail-soft by construction (see vash.progress.RunReporter) — excluded from
+    # repr/equality since it wraps a live Console, not run identity.
+    reporter: "RunReporter | None" = field(default=None, repr=False, compare=False)
     # Path to the cached code graph (audit.graph). Set by the taint step (V8)
     # once built so later graph consumers (V6/F2) can reuse the same cache.
     graph_cache_path: Path | None = None

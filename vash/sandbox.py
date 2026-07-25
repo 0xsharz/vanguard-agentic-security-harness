@@ -73,6 +73,17 @@ def is_sandboxed() -> bool:
     return _DOCKERENV.exists()
 
 
+def resolve_execution(*, dynamic_validation: bool, allow_no_sandbox: bool = False) -> bool:
+    """Resolve whether target-code execution is enabled for a run, enforcing the
+    sandbox precondition. Returns True (dynamic) / False (static-only). Raises
+    SandboxError if dynamic validation was requested but no sandbox (and no dev
+    escape) is available — callers must fail fast rather than silently downgrade."""
+    execution_enabled = bool(dynamic_validation and (is_sandboxed() or allow_no_sandbox))
+    if dynamic_validation and not execution_enabled:
+        require(allow_no_sandbox=allow_no_sandbox)  # raises SandboxError with remedy
+    return execution_enabled
+
+
 def require(*, allow_no_sandbox: bool = False) -> None:
     """Gate that target-code execution MUST pass BEFORE running anything
     from the target repo (e.g. its own test suite for `remediate --verify`).

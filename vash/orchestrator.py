@@ -9,7 +9,7 @@ import logging
 import os
 from pathlib import Path
 
-from vash import stages
+from vash import sandbox, stages
 from vash.catchall import build_catchall_tasks
 from vash.config import HarnessConfig
 from vash.graph import GraphQuery, build_or_load
@@ -450,6 +450,8 @@ async def run_pipeline(
     max_recon_tasks: int | None = None,
     live_target: dict | None = None,
     scope_notes: str | None = None,
+    dynamic_validation: bool = False,
+    allow_no_sandbox: bool = False,
 ) -> Path:
     ctx = StageContext(
         run_id=run_id,
@@ -458,6 +460,10 @@ async def run_pipeline(
         live_target=live_target,
         scope_notes=scope_notes,
     )
+
+    # F1: resolve execution mode + enforce sandbox precondition (fail fast).
+    ctx.execution_enabled = sandbox.resolve_execution(
+        dynamic_validation=dynamic_validation, allow_no_sandbox=allow_no_sandbox)
 
     if db.get_run(run_id) is None:
         db.create_run(str(repo_path.resolve()), run_id)
@@ -482,6 +488,9 @@ async def run_pipeline(
         raise RuntimeError(
             f"run_id {run_id!r} already exists; pass --resume to continue it."
         )
+
+    log.info("[%s] mode=%s (execution_enabled=%s)", run_id,
+             "dynamic" if ctx.execution_enabled else "static", ctx.execution_enabled)
 
     def _budget_check(stage_name: str) -> None:
         if max_cost_usd is None:

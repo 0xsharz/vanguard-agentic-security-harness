@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Run a VASH scan inside the execution sandbox (container). Because the scan runs
-# in a container, /.dockerenv makes vash.sandbox.is_sandboxed() True, so Hunt
-# executes per-candidate PoCs for zero-false-positive confirmation — safely
-# isolated from your host.
+# Run a VASH scan inside the execution sandbox (container), opted into executed-PoC
+# validation. Execution requires BOTH: --dynamic-validation (passed below) AND an
+# active sandbox — /.dockerenv inside this container makes vash.sandbox.is_sandboxed()
+# True, satisfying the second precondition. Together they let Hunt execute
+# per-candidate PoCs for zero-false-positive confirmation — safely isolated from your
+# host. (Default `vash run`, without --dynamic-validation, is static-only even here.)
 #
 # Auth: your host may log in via the macOS Keychain, which CANNOT cross into a
 # Linux container. Provide a container-passable credential first:
@@ -40,6 +42,6 @@ docker run --rm -it \
   -e ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}" \
   -v "$TARGET_ABS":/target:ro \
   -v "$ROOT/results":/app/results \
-  vash:latest run --repo /target --run-id "$RUN_ID" "$@"
+  vash:latest run --repo /target --run-id "$RUN_ID" --dynamic-validation "$@"
 
 echo "[run-in-docker] done — report at results/$RUN_ID/report.json"

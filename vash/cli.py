@@ -27,6 +27,7 @@ def _allow_api_key_from_env_or_flag(flag: bool) -> bool:
 from vash.config import load_config
 from vash.orchestrator import CostExceeded, run_pipeline
 from vash.redact import redact_json
+from vash.sandbox import SandboxError
 from vash.stages._common import StageContext
 from vash.stages.remediate import run_remediate
 from vash.stages.revalidate import DEFAULT_MIN_CONFIDENCE, run_revalidate
@@ -125,6 +126,13 @@ def auth_check(allow_api_key: bool) -> None:
               type=click.Path(exists=True, dir_okay=False),
               help="Optional: path to a text file with target-specific scope "
                    "rules / exclusions; passed verbatim to every stage.")
+@click.option("--dynamic-validation", is_flag=True, default=False,
+              help="Enable the executed-PoC (sandboxed) validation stage. Default: "
+                   "static-only. Requires a sandbox (Docker/VASH_SANDBOX=1) or "
+                   "--dangerously-no-sandbox.")
+@click.option("--dangerously-no-sandbox", "no_sandbox", is_flag=True, default=False,
+              help="DEV ONLY: allow --dynamic-validation to run PoCs without an active "
+                   "sandbox, with a loud warning. Unsafe on untrusted targets.")
 @click.option("--config", "config_path", default=None, type=click.Path(),
               help="Override config/stages.yaml.")
 @click.option("--allow-api-key", is_flag=True, default=False,
@@ -134,6 +142,7 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
         max_concurrency: int | None, max_recon_tasks: int | None,
         target_url: str | None, target_creds: tuple[str, ...],
         scope_notes_path: str | None,
+        dynamic_validation: bool, no_sandbox: bool,
         config_path: str | None,
         allow_api_key: bool) -> None:
     """Run the full 8-stage pipeline against a target repo."""
@@ -185,6 +194,8 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
             max_recon_tasks=max_recon_tasks,
             live_target=live_target,
             scope_notes=scope_notes,
+            dynamic_validation=dynamic_validation,
+            allow_no_sandbox=no_sandbox,
         ))
         console.print(f"[green]done[/green] run_id={run_id} report={report}")
         try:
@@ -196,6 +207,9 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
     except CostExceeded as e:
         console.print(f"[yellow]aborted[/yellow] {e}")
         sys.exit(3)
+    except SandboxError as e:
+        console.print(f"[red]dynamic validation refused:[/red] {e}")
+        sys.exit(2)
     except Exception as e:
         console.print(f"[red]failed[/red] {type(e).__name__}: {e}")
         raise

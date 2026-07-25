@@ -34,7 +34,6 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from vash import sandbox
 from vash.json_utils import extract_json, validate_schema
 
 log = logging.getLogger(__name__)
@@ -106,6 +105,18 @@ def _classify_api_error(text: str) -> tuple[str, type[RuntimeError]]:
     return "unknown_api_error", TransientAgentError
 
 
+def _gate_tools(allowed_tools: list[str], execution_enabled: bool, stage: str) -> list[str]:
+    """The R1 safety gate: strip Bash (all target-code execution) unless dynamic
+    validation is enabled for this run. Pure + logged so it is unit-testable."""
+    if "Bash" in allowed_tools and not execution_enabled:
+        log.info(
+            "[runner] stage=%s: Bash stripped — dynamic validation off (static-only). "
+            "Pass --dynamic-validation with a sandbox to run PoCs.", stage,
+        )
+        return [t for t in allowed_tools if t != "Bash"]
+    return allowed_tools
+
+
 async def run_agent(
     *,
     stage: str,
@@ -123,6 +134,7 @@ async def run_agent(
     repair_attempts: int = 1,
     transient_retries: int = 3,
     transient_base_delay: float = 30.0,
+    execution_enabled: bool = False,
 ) -> AgentResult:
     """Run one agent, retrying transient API errors with exponential backoff.
 
@@ -132,20 +144,13 @@ async def run_agent(
     produced parseable output that doesn't match the schema even after
     repair turns.
     """
-    # R1 — the central sandbox gate (the safety invariant): no stage may
-    # execute anything on a non-sandboxed host, regardless of what
-    # config/stages.yaml grants it. This is what makes Hunt's restored PoC
-    # execution (and any other stage's Bash — e.g. Recon's git mining,
-    # Trace's static inspection + optional live HTTP round-trip) safe: it
-    # only ever runs inside an active isolation sandbox. Computed once,
-    # here, before the retry loop below ever builds a ClaudeAgentOptions.
-    if "Bash" in allowed_tools and not sandbox.is_sandboxed():
-        allowed_tools = [t for t in allowed_tools if t != "Bash"]
-        log.info(
-            "[runner] stage=%s: Bash stripped — no active sandbox; static-only mode "
-            "(run inside a container or set VASH_SANDBOX=1 to enable PoC execution)",
-            stage,
-        )
+    # R1 — the central safety gate: no stage may execute anything unless the
+    # caller has already resolved BOTH preconditions into `execution_enabled`
+    # (dynamic_validation flag AND an active sandbox — see
+    # sandbox.resolve_execution(), called once per run in the orchestrator).
+    # Computed once, here, before the retry loop below ever builds a
+    # ClaudeAgentOptions.
+    allowed_tools = _gate_tools(allowed_tools, execution_enabled, stage)
 
     last_exc: RuntimeError | None = None
     for attempt in range(transient_retries + 1):

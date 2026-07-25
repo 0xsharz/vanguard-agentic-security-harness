@@ -3,11 +3,23 @@
 R1 restores audit's Hunt PoC execution (compiling/running proof-of-concept
 code against the target), which requires Bash. That is only safe inside an
 active isolation sandbox (a container — `/.dockerenv` present, or
-`VASH_SANDBOX=1`). This file pins the central, stage-agnostic safety
-invariant that makes it safe: `run_agent()` strips `Bash` out of
-`allowed_tools` whenever `vash.sandbox.is_sandboxed()` is False, no matter
-what `config/stages.yaml` grants a given stage. Inside a sandbox, Bash
-passes through unchanged.
+`VASH_SANDBOX=1`) AND with the operator's explicit `--dynamic-validation`
+opt-in (F1, tests/test_dynamic_validation.py). `run_agent()` strips `Bash`
+out of `allowed_tools` via the pure `_gate_tools()` helper, keyed on the
+caller-supplied `execution_enabled` bool — no matter what `config/stages.yaml`
+grants a given stage.
+
+As of F1, `run_agent()` itself no longer consults `vash.sandbox.is_sandboxed()`
+directly: that check (plus the `--dynamic-validation` flag) is resolved ONCE
+per run by `sandbox.resolve_execution()` in the orchestrator, and the result
+is threaded down through `StageContext.execution_enabled` to every
+`run_agent()` call. The tests below simulate that upstream resolution by
+passing `execution_enabled` explicitly; the `VASH_SANDBOX`/`.dockerenv`
+signals are still set in the "retained" cases to document what a realistic
+sandboxed + dynamic-validation call site looks like, but — pinned by
+tests/test_dynamic_validation.py's `test_resolve_execution_enabled` — it is
+`execution_enabled`, not the ambient sandbox signal, that `run_agent()`
+itself actually gates on.
 
 All tests here are OFFLINE and hermetic. The real `run_agent()` runs (so the
 gate itself is genuinely exercised), but `_run_agent_once` — the function
@@ -55,7 +67,8 @@ def _capture_allowed_tools(monkeypatch, captured: list[list[str]]):
     monkeypatch.setattr(runner, "_run_agent_once", fake_run_agent_once)
 
 
-async def _run(tmp_path: Path, *, stage: str, allowed_tools: list[str]) -> None:
+async def _run(tmp_path: Path, *, stage: str, allowed_tools: list[str],
+                execution_enabled: bool = False) -> None:
     await run_agent(
         stage=stage,
         prompt_file=tmp_path / "p.md",
@@ -66,6 +79,7 @@ async def _run(tmp_path: Path, *, stage: str, allowed_tools: list[str]) -> None:
         cwd=tmp_path / "cwd",
         artifact_dir=tmp_path / "art",
         artifact_name="task1",
+        execution_enabled=execution_enabled,
     )
 
 
@@ -96,15 +110,19 @@ async def test_bash_stripped_when_not_sandboxed_regardless_of_stage(
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Sandboxed -> Bash retained.
+# execution_enabled=True (dynamic validation resolved upstream) -> retained.
 # ─────────────────────────────────────────────────────────────────────────
 
 async def test_bash_retained_when_sandboxed_via_env(tmp_path: Path, monkeypatch) -> None:
+    # VASH_SANDBOX=1 mirrors the realistic call site (sandbox.resolve_execution()
+    # would see this and return True given dynamic_validation=True upstream), but
+    # it's execution_enabled=True below that actually drives run_agent()'s gate.
     monkeypatch.setenv("VASH_SANDBOX", "1")
     captured: list[list[str]] = []
     _capture_allowed_tools(monkeypatch, captured)
 
-    await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"])
+    await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"],
+               execution_enabled=True)
 
     assert captured == [["Read", "Grep", "Glob", "Bash"]]
 
@@ -116,7 +134,8 @@ async def test_bash_retained_when_sandboxed_via_dockerenv(tmp_path: Path, monkey
     captured: list[list[str]] = []
     _capture_allowed_tools(monkeypatch, captured)
 
-    await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"])
+    await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"],
+               execution_enabled=True)
 
     assert captured == [["Read", "Grep", "Glob", "Bash"]]
 
@@ -162,7 +181,8 @@ async def test_bash_stripped_logs_static_only_notice(
 
     assert "Bash stripped" in caplog.text
     assert "hunt" in caplog.text
-    assert "VASH_SANDBOX" in caplog.text
+    assert "dynamic validation off" in caplog.text
+    assert "--dynamic-validation" in caplog.text
 
 
 async def test_bash_retained_logs_no_static_only_notice(
@@ -172,6 +192,7 @@ async def test_bash_retained_logs_no_static_only_notice(
     _capture_allowed_tools(monkeypatch, [])
 
     with caplog.at_level(logging.INFO, logger="vash.runner"):
-        await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"])
+        await _run(tmp_path, stage="hunt", allowed_tools=["Read", "Grep", "Glob", "Bash"],
+                   execution_enabled=True)
 
     assert "Bash stripped" not in caplog.text
