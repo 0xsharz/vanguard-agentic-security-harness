@@ -117,7 +117,23 @@
             "items": { "type": "string" },
             "description": "Conditions that must hold for the exploit to work (auth level, feature flag, network position). Empty if none."
           },
-          "how_to_fix": { "type": "string", "description": "Concrete remediation — the specific function/API/validation to change. A more detailed companion to `recommendation`." }
+          "how_to_fix": { "type": "string", "description": "Concrete remediation — the specific function/API/validation to change. A more detailed companion to `recommendation`." },
+          "validation": {
+            "type": "object",
+            "description": "Adversarial-verification outcome for this finding — Validate's verdict/rationale/validator_confidence. Injected from the run state (Finding.validation_status/validation_json) by report.py's _attach_validation; never agent-authored (Validate runs before Report and CANNOT emit new findings, so this is only ever a read of its already-stored verdict). Only the keys Validate actually emitted are present.",
+            "additionalProperties": false,
+            "properties": {
+              "verdict": { "type": "string", "enum": ["confirmed", "rejected", "needs_more_info"] },
+              "rationale": { "type": "string" },
+              "validator_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "The hunter's own confidence in the finding (distinct from `validation.validator_confidence`). Injected from the run state (Finding.confidence) by report.py's _attach_validation."
+          }
         }
       }
     },

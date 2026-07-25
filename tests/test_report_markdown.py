@@ -9,13 +9,23 @@ must render every section header even when the underlying object is absent
 (an explicit "_Not determined (static run)._" line rather than a dropped
 section or a crash), and must never raise on a minimal payload.
 
-All OFFLINE: pure function over hand-built dicts, no StateDB, no agent/network.
+Most tests here are pure over hand-built dicts (no StateDB, no agent/network).
+One section (`_attach_validation` integration, below) additionally seeds a
+real StateDB in tmp_path to prove `vash.stages.report._attach_validation` —
+not a hand-injected fixture — is what actually surfaces a finding's
+verdict/confidence onto the report payload the renderer consumes.
+
+All OFFLINE regardless: no agent calls, no network.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from vash.reporting import render_report as render_report_reexport
 from vash.reporting.markdown import render_report
+from vash.stages import report as R
+from vash.state import StateDB
 
 NOT_DETERMINED = "_Not determined (static run)._"
 
@@ -211,6 +221,80 @@ def test_confidence_line() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _attach_validation integration (Fix 1, review): `_enriched_report` above
+# hand-injects `validation`/`confidence` onto its fixture dicts, which a real
+# report agent/fallback builder never does — report.schema.json documents
+# both as post-hoc-only. This proves the actual production path: a
+# schema-valid finding with NEITHER field, run through the real
+# `vash.stages.report._attach_validation` against a seeded StateDB, ends up
+# rendering the verdict + confidence it produced.
+# ---------------------------------------------------------------------------
+
+
+def test_attach_validation_surfaces_verdict_and_confidence(tmp_path: Path) -> None:
+    db = StateDB(tmp_path / "state.db")
+    try:
+        run_id = db.create_run("/some/repo", "r1")
+        db.add_task(run_id, {
+            "task_id": "t_1", "attack_class": "ssrf", "scope_hint": "x",
+            "target_files": ["app/webhooks.py"], "rationale": "r", "priority": 1,
+            "source": "recon",
+        })
+        db.add_finding(run_id, "t_1", {
+            "finding_id": "f_ssrf", "file": "app/webhooks.py",
+            "line_start": 42, "line_end": 48, "vuln_class": "ssrf",
+            "severity": "critical", "description": "d", "evidence_snippet": "e",
+            "confidence": 0.77,
+        })
+        db.set_finding_validation("f_ssrf", "confirmed", {
+            "finding_id": "f_ssrf", "verdict": "confirmed",
+            "rationale": "Traced the callback_url from the request body to "
+                         "requests.get with no intervening validation.",
+            "validator_confidence": 0.91,
+        })
+
+        # A schema-valid report finding exactly as the report agent (or the
+        # fallback builder) actually emits it — no validation/confidence key.
+        payload = {
+            "findings": [{
+                "finding_id": "f_ssrf",
+                "title": "SSRF via unvalidated webhook URL",
+                "severity": "critical",
+                "vuln_class": "ssrf",
+                "file": "app/webhooks.py",
+                "line_start": 42,
+                "line_end": 48,
+                "description": "The webhook handler fetches a user-controlled "
+                               "URL with no allowlist or private-IP guard.",
+                "evidence": "requests.get(request.json['callback_url'])",
+                "trace": {"entry_points": [], "call_chain": []},
+                "recommendation": "Validate the URL against an allowlist before fetching.",
+            }],
+        }
+        assert "validation" not in payload["findings"][0]
+        assert "confidence" not in payload["findings"][0]
+
+        R._attach_validation(db, run_id, payload)
+    finally:
+        db.close()
+
+    finding = payload["findings"][0]
+    assert finding["validation"]["verdict"] == "confirmed"
+    assert finding["validation"]["validator_confidence"] == 0.91
+    assert finding["validation"]["rationale"].startswith("Traced the callback_url")
+    assert finding["confidence"] == 0.77  # hunter's own confidence, distinct from validator's
+
+    report = {
+        "run_id": run_id, "target": {"repo_path": "/some/repo"},
+        "summary": {"total": 1, "by_severity": {"critical": 1}},
+        "findings": [finding],
+    }
+    md = render_report(report)
+    assert "TRUE_POSITIVE" in md  # mapped verdict label, sourced from _attach_validation
+    assert "0.91" in md  # validator_confidence surfaced as Confidence
+
+
+# ---------------------------------------------------------------------------
 # "Also at:" — only when variants present.
 # ---------------------------------------------------------------------------
 
@@ -227,6 +311,20 @@ def test_no_also_at_when_no_variants() -> None:
         f.pop("variants", None)
     md = render_report(report)
     assert "Also at:" not in md
+
+
+def test_also_at_string_variant() -> None:
+    """Defensive dual-shape handling (_also_at's legacy branch, markdown.py
+    ~475): the report agent's OWN output may carry bare finding_id strings
+    (schema permits string OR object — see report.schema.json's `variants`
+    description) before report.py's post-hoc _attach_variants overwrites the
+    field with located dicts. A string variant must still render under
+    "Also at:" rather than being dropped or crashing."""
+    report = _enriched_report()
+    report["findings"][0]["variants"] = ["f_bare_sibling"]
+    md = render_report(report)
+    assert "Also at:" in md
+    assert "f_bare_sibling" in md
 
 
 # ---------------------------------------------------------------------------

@@ -528,8 +528,6 @@ def _adversarial_verification(f: dict) -> list[str]:
     label = _VERDICT_LABEL.get(verdict, verdict.upper() or "UNKNOWN")
     conf = val.get("validator_confidence")
     head = f"**Verdict:** {label}"
-    if verdict:
-        head += f" ({verdict})"
     if isinstance(conf, (int, float)):
         head += f" — confidence {conf:.2f}"
     out.append(head)

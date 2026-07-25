@@ -198,12 +198,10 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
             allow_no_sandbox=no_sandbox,
         ))
         console.print(f"[green]done[/green] run_id={run_id} report={report}")
-        try:
-            _print_run_summary(db, run_id)
-        except Exception as e:
-            # fail-soft (4.3): the run already completed successfully above —
-            # a summary rendering bug must never turn that into a CLI failure.
-            console.print(f"[yellow]run summary print failed:[/yellow] {e}")
+        # Note: the per-stage run summary is already printed by
+        # ctx.reporter.run_summary(db, run_id) inside run_pipeline (F2/Task 2's
+        # RunReporter) — no separate summary render needed here (previously
+        # _print_run_summary duplicated it; removed, see review Fix 4).
     except CostExceeded as e:
         console.print(f"[yellow]aborted[/yellow] {e}")
         sys.exit(3)
@@ -455,99 +453,6 @@ def _show_run_detail(db: StateDB, run_id: str) -> None:
     t.add_row("findings (reachable)", str(len(reachable)))
     t.add_row("total cost ($)", f"{db.total_cost(run_id):.4f}")
     console.print(t)
-
-
-def _print_run_summary(db: StateDB, run_id: str) -> None:
-    """Render the 4.3 observability run summary: a per-stage cost/latency/
-    calls table (+ TOTAL row), a findings line, and a tasks line. Pure
-    presentation over db.run_summary(run_id) — no new instrumentation."""
-    summary = db.run_summary(run_id)
-
-    t = Table(title=f"run summary — {run_id}", show_lines=False)
-    t.add_column("stage")
-    t.add_column("calls", justify="right")
-    t.add_column("cost ($)", justify="right")
-    t.add_column("duration (s)", justify="right")
-    for stage, s in summary["stages"].items():
-        t.add_row(stage, str(s["calls"]), f"{s['usd']:.4f}", f"{s['duration_ms'] / 1000:.1f}")
-    totals = summary["totals"]
-    t.add_row(
-        "TOTAL", str(totals["calls"]), f"{totals['usd']:.4f}",
-        f"{totals['duration_ms'] / 1000:.1f}", style="bold",
-    )
-    console.print(t)
-
-    f = summary["findings"]
-    by_sev = ", ".join(f"{k}: {v}" for k, v in f["by_severity"].items())
-    console.print(
-        f"[cyan]findings[/cyan]: {f['total']} total"
-        + (f" ({by_sev})" if by_sev else "")
-        + f" — canonical: {f['canonical']}"
-    )
-
-    tk = summary["tasks"]
-    by_src = ", ".join(f"{k}: {v}" for k, v in tk["by_source"].items())
-    console.print(
-        f"[cyan]tasks[/cyan]: {tk['total']} total" + (f" ({by_src})" if by_src else "")
-    )
-
-
-def _render_markdown_report(report: dict) -> str:
-    lines: list[str] = []
-    lines.append(f"# Vulnerability report — `{report['run_id']}`")
-    lines.append(f"Target: `{report['target']['repo_path']}`  ")
-    s = report["summary"]
-    by = s.get("by_severity", {})
-    lines.append(f"**Total findings: {s['total']}** — "
-                 + ", ".join(f"{k}: {v}" for k, v in by.items()) if by
-                 else f"**Total findings: {s['total']}**")
-    lines.append("")
-    for f in report["findings"]:
-        lines.append(f"## {f['title']}")
-        lines.append(f"- **Severity**: {f['severity']}  ")
-        lines.append(f"- **Class**: {f['vuln_class']}"
-                     + (f" ({f['cwe']})" if f.get("cwe") else ""))
-        lines.append(f"- **Location**: `{f['file']}:{f['line_start']}-{f['line_end']}`  ")
-        lines.append("")
-        lines.append(f["description"])
-        lines.append("")
-        lines.append("```")
-        lines.append(f["evidence"])
-        lines.append("```")
-        lines.append("")
-        ep = f["trace"].get("entry_points", [])
-        if ep:
-            lines.append("**Entry points**:")
-            for e in ep:
-                lines.append(f"- `{e['kind']}` at `{e['location']}`")
-            lines.append("")
-        cc = f["trace"].get("call_chain", [])
-        if cc:
-            lines.append("**Call chain**:")
-            for frame in cc:
-                lines.append(f"1. `{frame['file']}:{frame['line']}` — `{frame['function']}()`")
-            lines.append("")
-        lines.append(f"**Recommendation**: {f['recommendation']}")
-        lines.append("")
-        variants = f.get("variants") or []
-        if variants:
-            locs = []
-            for v in variants:
-                if isinstance(v, dict):
-                    # A located variant normally carries `file`; guard the
-                    # degenerate case (file is None) so we render the
-                    # finding_id instead of a bare "None:None".
-                    if v.get("file") is None:
-                        locs.append(f"`{v.get('finding_id')}`")
-                    else:
-                        locs.append(f"`{v.get('file')}:{v.get('line_start')}`")
-                else:
-                    locs.append(f"`{v}`")
-            lines.append(f"_Also at_: {', '.join(locs)}")
-            lines.append("")
-        lines.append("---")
-        lines.append("")
-    return "\n".join(lines)
 
 
 if __name__ == "__main__":

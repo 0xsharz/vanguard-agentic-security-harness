@@ -78,6 +78,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         _attach_coverage(db, ctx.run_id, fallback)
         _attach_cwe(db, ctx.run_id, fallback)
         _attach_variants(db, ctx.run_id, fallback)
+        # Fix 1 (review): per-finding validation verdict + confidence — same
+        # authoritative post-hoc treatment as CWE/variants above.
+        _attach_validation(db, ctx.run_id, fallback)
         # Task 3: report enrichment — scan metrics / verification funnel /
         # CVSS baseline, same authoritative post-hoc treatment as CWE/
         # coverage/variants above (metrics+verification are always
@@ -108,6 +111,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # A2: attach located deduped-sibling references (VVAH "Also at:" parity) —
     # same authoritative post-hoc treatment as CWE/coverage/input-inventory above.
     _attach_variants(db, ctx.run_id, payload)
+    # Fix 1 (review): per-finding validation verdict + confidence — same
+    # authoritative post-hoc treatment as CWE/coverage/variants above.
+    _attach_validation(db, ctx.run_id, payload)
     # Task 3: report enrichment — scan metrics / verification funnel / CVSS
     # baseline, same authoritative post-hoc treatment as CWE/coverage/variants
     # above (metrics+verification are always state-sourced; CVSS only fills a
@@ -203,6 +209,44 @@ def _attach_variants(db: StateDB, run_id: str, payload: dict) -> None:
                 f["variants"] = _group_members_excluding(db, run_id, gid, f.get("finding_id"))
     except Exception as e:  # additive disclosure — never break report emission
         log.warning("[%s] variant attach failed: %s", run_id, e)
+
+
+def _attach_validation(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach each finding's adversarial-verification outcome (Validate's
+    verdict/rationale/validator_confidence) and the hunter's own confidence
+    onto the report finding — same authoritative post-hoc treatment as
+    _attach_variants/_attach_cwe above. Neither the report agent nor the
+    fallback builder populate `finding["validation"]`/`finding["confidence"]`
+    in the report payload, so without this attach markdown.py's "Adversarial
+    verification" block and "Confidence" line always render Not-determined.
+
+    Sourced from run state (`Finding.validation_status` / `.validation_json` /
+    `.confidence`), keyed by `finding_id`. Only the keys actually present on
+    the stored validation payload are copied — never invented; a key Validate
+    didn't emit (e.g. a needs_more_info verdict carries no cvss_vector) is
+    simply omitted, and the renderer already degrades gracefully for that.
+    Fail-soft: validation disclosure must never break report emission."""
+    try:
+        by_id = {f.finding_id: f for f in db.get_findings(run_id)}
+        for rf in payload.get("findings", []):
+            finding = by_id.get(rf.get("finding_id"))
+            if finding is None:
+                continue
+            vjson = finding.validation_json or {}
+            validation: dict = {}
+            verdict = finding.validation_status or vjson.get("verdict")
+            if verdict:
+                validation["verdict"] = verdict
+            if "rationale" in vjson:
+                validation["rationale"] = vjson["rationale"]
+            if "validator_confidence" in vjson:
+                validation["validator_confidence"] = vjson["validator_confidence"]
+            if validation:
+                rf["validation"] = validation
+            if finding.confidence is not None:
+                rf["confidence"] = finding.confidence
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] validation attach failed: %s", run_id, e)
 
 
 def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
