@@ -113,7 +113,9 @@ async def test_bash_stripped_when_not_sandboxed_regardless_of_stage(
 # execution_enabled=True (dynamic validation resolved upstream) -> retained.
 # ─────────────────────────────────────────────────────────────────────────
 
-async def test_bash_retained_when_sandboxed_via_env(tmp_path: Path, monkeypatch) -> None:
+async def test_bash_retained_when_execution_enabled_with_sandboxed_env(
+    tmp_path: Path, monkeypatch
+) -> None:
     # VASH_SANDBOX=1 mirrors the realistic call site (sandbox.resolve_execution()
     # would see this and return True given dynamic_validation=True upstream), but
     # it's execution_enabled=True below that actually drives run_agent()'s gate.
@@ -127,7 +129,9 @@ async def test_bash_retained_when_sandboxed_via_env(tmp_path: Path, monkeypatch)
     assert captured == [["Read", "Grep", "Glob", "Bash"]]
 
 
-async def test_bash_retained_when_sandboxed_via_dockerenv(tmp_path: Path, monkeypatch) -> None:
+async def test_bash_retained_when_execution_enabled_with_dockerenv(
+    tmp_path: Path, monkeypatch
+) -> None:
     marker = tmp_path / "dockerenv-present"
     marker.write_text("")
     monkeypatch.setattr(sandbox, "_DOCKERENV", marker)

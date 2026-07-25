@@ -78,10 +78,12 @@ def resolve_execution(*, dynamic_validation: bool, allow_no_sandbox: bool = Fals
     sandbox precondition. Returns True (dynamic) / False (static-only). Raises
     SandboxError if dynamic validation was requested but no sandbox (and no dev
     escape) is available — callers must fail fast rather than silently downgrade."""
-    execution_enabled = bool(dynamic_validation and (is_sandboxed() or allow_no_sandbox))
-    if dynamic_validation and not execution_enabled:
-        require(allow_no_sandbox=allow_no_sandbox)  # raises SandboxError with remedy
-    return execution_enabled
+    if not dynamic_validation:
+        return False
+    # dynamic requested: require() permits silently if sandboxed, warns LOUDLY
+    # on the --dangerously-no-sandbox escape, or raises SandboxError if neither.
+    require(allow_no_sandbox=allow_no_sandbox)
+    return True
 
 
 def require(*, allow_no_sandbox: bool = False) -> None:

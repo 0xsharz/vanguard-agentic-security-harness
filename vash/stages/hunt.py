@@ -6,7 +6,6 @@ import asyncio
 import logging
 from typing import Awaitable, Callable
 
-from vash import sandbox
 from vash.graph_context import neighbors_for_files
 from vash.lang.hints import detect_languages, hints_for
 from vash.runner import (
@@ -78,7 +77,11 @@ async def run_hunt(
                 # vs. reason-statically-and-flag) — the runner's sandbox
                 # gate (vash/runner.py) is what actually enforces the tool
                 # set; this just lets Hunt itself know which branch to take.
-                "execution_available": sandbox.is_sandboxed(),
+                # Must mirror the same value passed to run_agent() below
+                # (ctx.execution_enabled, resolved once per run by
+                # sandbox.resolve_execution() in the orchestrator) rather
+                # than re-deriving a possibly-diverging local signal.
+                "execution_available": ctx.execution_enabled,
                 **ctx.extras(),
             }
             gq = ctx.graph()
