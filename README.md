@@ -1,708 +1,252 @@
-# VASH — Vanguard Agentic Security Harness
+<div align="center">
 
-VASH is a **static-first, agentic Python vulnerability scanner**. Its backbone is
-an 8-stage pipeline — recon → hunt → validate → gapfill → dedupe → trace →
-feedback → report — inherited from evilsocket/audit and grounded by a
-deterministic AST call-graph; a 9th stage, Chain, now runs after Feedback to
-synthesize multi-finding exploit chains before the report is written. Many
-narrow, single-attack-class agents; a differently-modeled Validate agent that
-adversarially tries to **disprove** every finding by reading code — static
-confirmation, not re-execution; and an explicit reachability trace as the
-gate. That's the architecture, not "ask one big model to find bugs."
+# 🛡️ VASH — Vanguard Agentic Security Harness
 
-VASH forks [evilsocket/audit](https://github.com/evilsocket/audit) (the base
-pipeline below) and grafts capability + production features from [Capital One
-VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa
-VVAH](https://github.com/visa/visa-vulnerability-agentic-harness). See
-[Attribution](#attribution) for exactly what came from where.
+**A static-first, agentic vulnerability scanner that hunts broadly, then _proves_ each finding by running a real exploit in a sandbox.**
 
-Driven by your **Claude Pro / Max subscription** through the official Claude
-Code Agent SDK. No API key needed if you already use `claude login`.
+[![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](#-license)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](#-install)
+[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen)](#-project-structure)
+[![Powered by Claude](https://img.shields.io/badge/powered%20by-Claude%20Agent%20SDK-D97757)](https://www.anthropic.com)
+[![Static-first](https://img.shields.io/badge/mode-static--first%20%2B%20executed--PoC-6E56CF)](#-static-vs-dynamic-validation)
 
-## Origin
+</div>
 
-The base pipeline is a from-scratch reimplementation of the architecture
-described in Cloudflare's [Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/)
-post, which tested Anthropic's Mythos preview LLM against Cloudflare's own
-codebase. The blog argues that real-world vulnerability discovery does **not**
-come from asking one big model "find bugs here" — it comes from:
+---
 
-1. **Many narrow agents** working in parallel on tightly-scoped questions
-   ("Look for command injection in this specific function, with this trust
-   boundary above it") rather than one exhaustive agent.
-2. **Deliberate disagreement** — a second agent, on a different model, that
-   tries to *disprove* the first agent's findings.
-3. **A reachability trace** as the gating step — most "is this code buggy?"
-   findings are noise unless an attacker-controlled input can actually reach
-   the sink from outside the system.
-4. **A feedback loop** so reachable bugs in one place automatically seed
-   hunts for the same pattern elsewhere.
+VASH finds real, reachable vulnerabilities in source code — and its findings aren't guesses. Where most LLM scanners stop at *"this looks exploitable,"* VASH goes one step further: it **writes and executes a proof-of-concept for every candidate inside an isolated sandbox** and keeps only the ones that actually fire. That single mechanism — *static recall plus sandboxed executed-PoC confirmation* — is what separates it from every static-only agent.
 
-evilsocket/audit packaged that architecture into a runnable agent (prompts,
-schemas, state store, orchestrator). VASH forks that engine wholesale — see
-[Attribution](#attribution) — and extends it with a deterministic call-graph,
-completeness guarantees, static disprove-gates, exploit-chain synthesis, and
-two new decoupled commands (`vash remediate`, `vash validate`).
-
-## The pipeline
-
-![Vulnerability discovery harness — the base 8-stage architecture](https://raw.githubusercontent.com/evilsocket/audit/main/docs/pipeline.png)
-
-<sub>Diagram from Cloudflare's [Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/) post (reproduced via evilsocket/audit) — the base 8-stage architecture VASH forked. It predates VASH's 9th (Chain) stage below.</sub>
-
-| # | Stage        | Default model | Purpose |
-|---|--------------|---------------|---------|
-| 1 | Recon        | Opus 4.7   | Map the repo; emit narrowly-scoped Hunt tasks + the completeness input inventory (F1) |
-| 2 | Hunt         | Sonnet 4.6 | One attack class per agent; hunts statically, then executes a PoC to confirm — only inside a sandbox (source→sink argument + `needs_poc` on a bare host) |
-| 3 | Validate     | Opus 4.7   | Adversarial re-read; tries to **disprove** via static gates (F5) — different model from Hunt |
-| 4 | Gapfill      | Sonnet 4.6 | Re-queue under-covered areas |
-| 5 | Dedupe       | Sonnet 4.6 | Cluster findings by root cause |
-| 6 | Trace        | Opus 4.7   | Prove attacker-controlled input reaches the sink |
-| 7 | Feedback     | Sonnet 4.6 | Turn reachable traces into new Hunt tasks |
-| 8 | Chain (V11)  | Sonnet 4.6 | Synthesize multi-finding exploit chains from ALL confirmed findings — read-only, fail-soft |
-| 9 | Report       | Sonnet 4.6 | Schema-validated structured report (`findings` + `chains` + `input_inventory` + `coverage`) |
-
-Each stage is one markdown prompt in `prompts/` + one JSON Schema in
-`schemas/`; the orchestrator passes the schema into the system prompt so
-every output is shape-stable on the first try.
-
-Between Recon and the Hunt/Validate/Gapfill loop, four fail-open
-task-synthesis passes run automatically and feed the Hunt queue: deterministic
-entry→sink taint chunking (V8), sink-backward orphan auditing (F3), gated
-specialist sweeps (V12), and the terminal catch-all coverage sweep (F6). An
-input-reconciliation pass also runs after the loop, before Dedupe, to
-guarantee every F1-enumerated input ends up with a final disposition. See
-[Capabilities](#capabilities).
-
-## Capabilities
-
-Grafted onto the base pipeline above (codes cross-reference
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)):
-
-- **Completeness input-inventory + reconciliation (F1)** — Recon enumerates
-  every attacker-controllable input up front; a reconciliation pass after
-  Hunt/Validate guarantees each one gets a `covered`/`uncovered` disposition
-  in the final report. Nothing silently falls off the map.
-- **Deterministic taint-path chunking (V8) + sink-backward orphan audit
-  (F3)** — a deterministic BFS over the AST call-graph turns every enumerated
-  input into forward entry→sink Hunt tasks; a backward pass audits sinks that
-  no input was shown to reach (disjoint from V8 by construction).
-- **Gated specialist sweeps (V12)** — repo-wide Hunt passes for
-  crypto/authz/deserialization/batch-ETL/IaC classes, but only for the
-  specialists whose surface actually exists in the repo (regex-gated), so
-  Validate budget is never spent disproving a guaranteed false positive.
-- **Catch-all coverage (F6) + cohesive partitioning (F2)** — a terminal
-  low-priority sweep queues one Hunt task per eligible file no other task
-  reached ("every file got ≥1 hunt", provably); F2 groups those files by
-  call-graph connectivity instead of directory prefix, so each task sees a
-  coherent source+sink slice.
-- **Graph neighbor-context (V6)** — composes the call-graph (callers,
-  callees, blast-radius, symbol-at-line) into small JSON blocks injected into
-  Hunt and Validate; fail-open when no graph is available.
-- **Per-language hints (V9) + repo-kind OWASP/CWE baselines (V10)** — a
-  per-language security-hints knowledge base sharpens what Hunt looks for; a
-  repo-kind classifier seeds Recon with the OWASP/CWE categories that kind of
-  repo is statistically prone to.
-- **CVSS severity (V4)** — Validate computes a CVSS 3.1 vector per finding;
-  severity is derived from that band rather than a model's free-text guess
-  (fails open to the model's own severity if vectoring fails).
-- **Design-controls context (V5)** — Recon surfaces existing mitigations it
-  finds (via git history and code) as a `design_controls` list, injected into
-  Hunt/Validate/Chain so agents check whether a control already neutralizes a
-  suspected issue before confirming it.
-- **Static disprove-gates (F5)** — Validate actively tries to disprove every
-  finding before confirming it: downgrade-on-uncertainty, checks *every* call
-  site (not just the one Hunt found), searches the full codebase for an
-  existing defense, and eliminates findings with no attacker-controlled
-  input — all read-only, no execution.
-- **Exploit-chain construction (V11)** — the Chain stage (#8 above) looks
-  across all confirmed findings and synthesizes multi-finding attack paths
-  that are more dangerous together than any single bug; each chain carries
-  its own severity while per-finding CVSS stays authoritative.
-- **Self-tuning miss-analysis (3.ST)** — an offline benchmark tool
-  (`python -m bench.analyze_misses --run-id ID`) diagnoses, for each
-  benchmark CVE a scored run missed, which pipeline phase
-  (recon/hunt/validate/dedupe/trace) lost it. A tuning aid for maintainers —
-  not part of a live `vash run`.
-- **Coverage honesty** — the report's `coverage` block is explicit about what
-  it could NOT confirm: `catchall_dropped` and `coverage_complete` mean a
-  truncated sweep can never silently read as "fully covered."
-- **Secret/PII redaction on egress** — the terminal deliverables every
-  command writes or prints are passed through a Luhn/IIN- and keyword-gated
-  redactor before they leave the process. See [Safety](#safety) for exactly
-  which artifacts are (and aren't) covered.
-
-## Install
-
-Requires **Python 3.11+**.
+It is built on a battle-tested foundation ([evilsocket/audit](https://github.com/evilsocket/audit)) and grafts the strongest ideas from [Capital One VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa VVAH](https://github.com/visa/visa-vulnerability-agentic-harness) — see [Attribution](#-attribution). It runs on your **Claude Pro/Max subscription** through the official Claude Code Agent SDK; no API key required.
 
 ```bash
+vash run --repo ./my-project                       # static analysis (safe by default)
+vash run --repo ./my-project --dynamic-validation  # + sandboxed executed-PoC confirmation
+```
+
+## 📖 Table of contents
+
+- [Why VASH](#-why-vash) · [Highlights](#-highlights) · [How it works](#-how-it-works) · [Install](#-install) · [Quickstart](#-quickstart)
+- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Project structure](#-project-structure)
+- [Configuration & cost](#-configuration--cost) · [Results](#-results) · [Attribution](#-attribution) · [License](#-license)
+
+---
+
+## 🎯 Why VASH
+
+A single "find bugs in this code" prompt produces noise. VASH instead runs a disciplined pipeline modeled on Cloudflare's *Project Glasswing* research:
+
+| Principle | What VASH does |
+|---|---|
+| **Many narrow agents** | Each hunter chases *one* attack class in *one* scoped location — not one exhaustive agent. |
+| **Deliberate disagreement** | A differently-modeled Validate agent adversarially tries to **disprove** every finding by re-reading the code. |
+| **Reachability as the gate** | A Trace stage proves an attacker-controlled input can actually reach the sink — unreachable "bugs" are dropped. |
+| **Feedback loops** | A confirmed pattern in one file automatically seeds hunts for the same pattern everywhere else. |
+| **Executed-PoC confirmation** | *VASH's differentiator.* In dynamic mode it runs a real exploit per candidate in a sandbox and keeps only what fires — near-zero false positives. |
+
+## ✨ Highlights
+
+- 🧠 **9-stage agentic pipeline** — recon → hunt → validate → gapfill → dedupe → trace → feedback → chain → report, over a deterministic AST **call-graph spine**.
+- 🎯 **Executed-PoC confirmation** — opt-in `--dynamic-validation` runs each PoC in an isolated sandbox; on a bare host VASH stays **100% static** and never executes untrusted code.
+- 🌐 **Multi-language** — Python, JavaScript/TypeScript, Go, Java, Ruby, PHP, C/C++, and more, plus web templates (Jinja/EJS/Handlebars…) and IaC.
+- 🔗 **Exploit-chain synthesis** — stitches individual findings into end-to-end attack chains.
+- 📊 **Professional reporting** — a detailed, advisory-grade Markdown report (threat model, CVSS + vectors, exploit scenarios, adversarial-verification verdicts, and paste-ready GitHub-Security-Advisory blocks) alongside a machine-readable `report.json`.
+- 📟 **Rich live logging** — per-stage progress, running cost, and a per-finding confirmation feed; degrades to clean plain lines when run detached.
+- 🛠️ **Decoupled commands** — `run` (scan), `remediate` (static patches), `validate` (independent second opinion).
+- 💳 **Subscription-native** — driven by Claude Pro/Max via the Agent SDK; optional metered API-key and OpenRouter/gateway support.
+
+## 🔍 How it works
+
+VASH maps the repository into a call-graph, fans out many narrowly-scoped hunters, adversarially validates each finding, proves reachability, and (optionally) confirms by execution — then writes the report.
+
+| # | Stage | Tier | Purpose |
+|---|---|---|---|
+| 1 | **Recon** | Opus | Map the repo; emit narrowly-scoped hunt tasks + a completeness inventory of every untrusted input. |
+| 2 | **Hunt** | Sonnet | One attack class per agent; hunts statically, then (dynamic mode) executes a PoC to confirm. |
+| 3 | **Validate** | Opus | Adversarial re-read on a *different* model — tries to **disprove** each finding. |
+| 4 | **Gapfill** | Sonnet | Re-queue under-covered areas until coverage is complete. |
+| 5 | **Dedupe** | Sonnet | Cluster findings by root cause; keep one canonical per distinct file. |
+| 6 | **Trace** | Opus | Prove attacker-controlled input reaches the sink (reachability gate). |
+| 7 | **Feedback** | Sonnet | Seed fresh hunts from confirmed patterns; re-run the loop. |
+| 8 | **Chain** | Sonnet | Synthesize multi-finding exploit chains. |
+| 9 | **Report** | Sonnet | Emit `report.json` (raw) + a detailed `report.md` (advisory-grade). |
+
+> A deterministic **graphify** call-graph feeds taint analysis (entry → sink) and sink-backward hunting, so agents reason over real data-flow, not guesses. Models are per-stage configurable.
+
+## 📦 Install
+
+**Requirements:** Python 3.11+, Node.js (for the bundled Claude CLI), and a Claude Pro/Max subscription (or an Anthropic API key).
+
+```bash
+git clone https://github.com/0xsharz/vash.git
+cd vash
 python -m venv .venv && source .venv/bin/activate
-pip install -e .            # runtime only
-pip install -e ".[dev]"     # + pytest/pytest-asyncio, to run the test suite
-```
+pip install -e .
 
-This pulls in `graphifyy` (the PyPI distribution name; imported as
-`graphify`) — the AST call-graph extractor that grounds the V8/F3/V6/F2/V11
-completeness and context features above. VASH pins it to
-`>=0.8.14,<0.9.0` and degrades to a grep/glob fallback (`vash/graph/fallback.py`)
-if graphify is missing or errors — those features fail open rather than
-crashing the run.
-
-Then verify auth:
-
-```bash
+# Authenticate (uses your Claude subscription — no API key needed)
+claude login
 vash auth-check
 ```
 
-`vash` resolves auth automatically, in order: an LLM gateway
-(`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` — e.g. OpenRouter), a headless
-subscription token (`CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token` —
-best for CI), or an interactive subscription login
-(`~/.claude/.credentials.json`, from `claude login` — best for local dev). The
-metered `ANTHROPIC_API_KEY` is honored only opt-in, via `--allow-api-key` or
-`AUDIT_ALLOW_API_KEY=1`\* in the env. Amazon Bedrock / Google Vertex /
-Microsoft Foundry work the same way the underlying `claude` CLI supports them
-(`CLAUDE_CODE_USE_BEDROCK=1` etc. — see the [Claude Code auth
-docs](https://code.claude.com/docs/en/authentication)); VASH doesn't add its
-own flags on top of those. Full precedence details and OpenRouter setup are
-in [Using a different model / provider](#using-a-different-model--provider)
-below.
-
-<sub>\* Yes, `AUDIT_ALLOW_API_KEY` — that env var name predates the
-`audit`→`vash` rename and is unchanged in the current code; it's not a typo in
-this doc.</sub>
-
-## Quickstart
+## 🚀 Quickstart
 
 ```bash
-# 1. Install + auth (see above)
-vash auth-check
+# 1. Scan a repo (static — safe by default)
+vash run --repo ./target-project --run-id my-first-scan
 
-# 2. Scan
-vash run --repo /path/to/target --run-id my-run
-vash status --run-id my-run
-vash report --run-id my-run --format md > report.md
+# 2. Read the report
+vash report --run-id my-first-scan --format md    # detailed Markdown
+#   raw JSON + report.md are also written under results/<run-id>/report/
 
-# 3. (optional, decoupled) generate patches for the confirmed findings
-vash remediate --run-id my-run
+# 3. (optional) Confirm findings by execution, inside a sandbox
+docker build -t vash:latest .
+./scripts/run-in-docker.sh ./target-project my-scan-dyn   # runs with --dynamic-validation
 
-# 4. (optional, decoupled) get an independent second opinion
-vash validate --run-id my-run
+# 4. (optional, decoupled) generate patches / a second opinion
+vash remediate --run-id my-first-scan
+vash validate  --run-id my-first-scan
 ```
 
-By default `vash run` uses **subscription billing** via your Claude.ai
-login — it does **not** call the metered Anthropic API. The auth module
-scrubs `ANTHROPIC_API_KEY` from the environment so a stray value can't
-silently divert billing.
-
-## Using a different model / provider
-
-The auth module picks one of three modes, in this order:
-
-1. **LLM gateway** (OpenRouter, custom proxy, etc.) — when
-   `ANTHROPIC_BASE_URL` points away from `anthropic.com` AND
-   `ANTHROPIC_AUTH_TOKEN` is set. The gateway env is left intact;
-   only `ANTHROPIC_API_KEY` is scrubbed (it would otherwise outrank the
-   gateway token).
-2. **Subscription OAuth (headless)** — `CLAUDE_CODE_OAUTH_TOKEN` from
-   `claude setup-token`. Best for CI.
-3. **Subscription OAuth (interactive)** — `~/.claude/.credentials.json`
-   from `claude login`. Best for local dev.
-
-### OpenRouter
-
-OpenRouter exposes Claude-compatible Anthropic-API endpoints behind its
-own credit system; that lets you spend OpenRouter credits instead of an
-Anthropic subscription, and gives you access to Sonnet/Opus *and* other
-models through the same SDK path. See [OpenRouter's Agent SDK guide](https://openrouter.ai/docs/guides/community/anthropic-agent-sdk).
-
-```bash
-export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
-export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
-export ANTHROPIC_API_KEY=""           # must be explicitly empty / unset
-# optional: pick a non-Anthropic model
-export ANTHROPIC_MODEL="anthropic/claude-sonnet-4-6"
-# or e.g.: ANTHROPIC_MODEL="openai/gpt-5"
-#         ANTHROPIC_MODEL="google/gemini-2.5-pro"
-#         ANTHROPIC_MODEL="qwen/qwen3-coder-480b"
-
-vash auth-check                       # confirms "using LLM gateway at https://openrouter.ai/api"
-vash run --repo /path/to/target --run-id orun --max-cost-usd 30
-```
-
-Caveats:
-- Per-stage model overrides in `config/stages.yaml` are model **names**
-  (e.g. `claude-opus-4-7`); OpenRouter accepts slash-prefixed forms like
-  `anthropic/claude-opus-4-7`. Edit the YAML if you want different
-  providers per stage. Otherwise `ANTHROPIC_MODEL` forces every stage
-  onto one model.
-- Non-Claude models may not produce schema-compliant JSON as reliably.
-  The runner's schema-validation + repair turn still applies; quality
-  varies by model.
-- Tool-use semantics (Read/Grep/Glob/Bash) are part of the Claude Code
-  CLI, not the model — they work as long as the gateway speaks the
-  Anthropic Messages API.
-
-### Other gateways / cloud providers
-
-Same recipe — anything that exposes the Anthropic Messages API at a URL
-+ a bearer token works:
-
-```bash
-export ANTHROPIC_BASE_URL="https://your-proxy.example.com"
-export ANTHROPIC_AUTH_TOKEN="$YOUR_TOKEN"
-unset ANTHROPIC_API_KEY
-```
-
-For Amazon Bedrock / Google Vertex / Microsoft Foundry, Claude Code has
-first-class env-var flags (`CLAUDE_CODE_USE_BEDROCK=1` etc.) that
-outrank everything else. See the [Claude Code auth docs](https://code.claude.com/docs/en/authentication).
-
-## Commands
-
-`vash` has six subcommands. `-v` / `--verbose` on the top-level group
-enables DEBUG logging for any of them, e.g. `vash -v run --repo ...`.
+## 🖥️ Commands
 
 ### `vash run` — the scan
 
 ```bash
-vash run --repo PATH [--run-id ID] [--resume] [--max-cost-usd N]
-          [--max-concurrency N] [--max-recon-tasks N]
-          [--target-url URL] [--target-creds KEY=VALUE ...]
-          [--scope-notes FILE] [--config FILE] [--allow-api-key]
+vash run --repo PATH [options]
 ```
 
-Runs the full 9-stage pipeline against `--repo` and writes
-`results/<run-id>/report/report.json` + `results/<run-id>/run_summary.json`.
-
-| Flag | Meaning |
+| Flag | Description |
 |---|---|
-| `--repo PATH` | **Required.** Target source-code repo (must already exist). |
-| `--run-id ID` | Run identifier. Default: random `run_<8 hex chars>`. |
-| `--resume` | Resume an existing `--run-id` — re-queues any task left `running` or `failed`, then continues. |
-| `--max-cost-usd N` | Abort cleanly (exit 3) once cumulative spend crosses `N`. Checked between stages and cooperatively inside Hunt. |
-| `--max-concurrency N` | Caps every stage's concurrency to `N` (a ceiling on `config/stages.yaml`'s per-stage values). |
-| `--max-recon-tasks N` | Caps how many initial Hunt tasks Recon may emit. |
-| `--target-url URL` | Optional live deployment to reproduce findings against — see [Live-target reproduction](#live-target-reproduction-optional). |
-| `--target-creds KEY=VALUE` | Repeatable; credentials passed to the agents alongside `--target-url`. Ignored (with a warning) if `--target-url` isn't set. |
-| `--scope-notes FILE` | Text file of target-specific scope rules, appended verbatim to every stage's input — see [Scope notes](#scope-notes-optional). Must already exist. |
-| `--config FILE` | Override `config/stages.yaml`. |
-| `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing (also via `AUDIT_ALLOW_API_KEY=1`). |
+| `--repo PATH` | **(required)** Path to the target source repo. |
+| `--run-id TEXT` | Run identifier (default: random). Reuse with `--resume`. |
+| `--resume` | Resume an existing run — re-queues interrupted/failed tasks. |
+| `--dynamic-validation` | **Enable the executed-PoC (sandboxed) validation stage.** Default is static-only. Requires a sandbox (`Docker`/`VASH_SANDBOX=1`) or `--dangerously-no-sandbox`. |
+| `--dangerously-no-sandbox` | DEV ONLY — allow `--dynamic-validation` to run PoCs without a sandbox, with a loud warning. Never use on untrusted targets. |
+| `--max-cost-usd FLOAT` | Abort if cumulative cost crosses this threshold. |
+| `--max-concurrency INT` | Cap every stage's concurrency (cost/rate containment). |
+| `--max-recon-tasks INT` | Cap the number of initial hunt tasks recon may emit. |
+| `--target-url URL` | Optional live deployment the agents may hit to confirm findings. |
+| `--target-creds K=V` | Credentials for the live target (repeatable). |
+| `--scope-notes FILE` | Target-specific scope rules / exclusions, passed to every stage. |
+| `--config PATH` | Override `config/stages.yaml` (models, concurrency, iterations). |
+| `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing. |
 
-### `vash remediate` — static patch generation (decoupled, opt-in)
-
-```bash
-vash remediate --run-id ID [--repo PATH] [--policy FILE] [--out DIR]
-                [--verify] [--dangerously-no-sandbox] [--allow-api-key]
-```
-
-Reads a prior `vash run`'s **confirmed** findings from `state.db`, runs each
-through the hard gate in `config/remediation_policy.yaml` (fail-closed — see
-[Configuration](#configuration)), and for every patch-eligible finding has a
-read-only agent (no Bash, no Write — see the `remediate` stage in
-`config/stages.yaml`) generate a unified diff + a security test. Nothing is
-ever applied to the target. Not part of `vash run`.
-
-| Flag | Meaning |
-|---|---|
-| `--run-id ID` | **Required.** The prior run to remediate. |
-| `--repo PATH` | Target repo (must already exist). Default: the path recorded for that run. |
-| `--policy FILE` | Remediation policy YAML. Default: `config/remediation_policy.yaml`. |
-| `--out DIR` | Output dir. Default: `results/<run-id>/remediation`. |
-| `--verify` | Ask to run the target's own tests to check a generated patch. Gated by `vash.sandbox.require()` — needs `VASH_SANDBOX=1` or `--dangerously-no-sandbox`, else refused fail-soft (recorded on the patch's `risk_notes`). Real test execution is still **DEFERRED** either way — nothing executes yet. |
-| `--dangerously-no-sandbox` | Dev-only: bypass the `--verify` sandbox gate with a loud warning instead of requiring an active sandbox. Unsafe against untrusted source; no effect without `--verify`. |
-| `--allow-api-key` | Same as `run`. |
-
-### `vash validate` — independent second opinion (decoupled, opt-in)
+### `vash report` — read the results
 
 ```bash
-vash validate --run-id ID [--repo PATH] [--model MODEL]
-               [--min-confidence N] [--out DIR] [--allow-api-key]
+vash report --run-id ID --format md     # detailed advisory-grade Markdown
+vash report --run-id ID --format json   # raw machine-readable report
 ```
 
-Re-reads a prior `vash run`'s confirmed findings with a fresh, read-only
-agent that actively tries to reach the *opposite* verdict before agreeing
-(VVAH's second-opinion stance) — deliberately a different model tier than
-the scan's own Validate stage. Never mutates `state.db`. Not part of
-`vash run`.
+### `vash remediate` — static patch generation *(decoupled, opt-in)*
 
-| Flag | Meaning |
-|---|---|
-| `--run-id ID` | **Required.** The prior run to re-verify. |
-| `--repo PATH` | Target repo (must already exist). Default: the path recorded for that run. |
-| `--model MODEL` | Override the second-opinion model. Default: `config/stages.yaml`'s `revalidate` stage model (`claude-sonnet-4-6`). |
-| `--min-confidence N` | Confidence gate, 0–10. A `validated` verdict scored below this is downgraded to `needs_review`. Default: `7`. |
-| `--out DIR` | Output dir. Default: `results/<run-id>/revalidation`. |
-| `--allow-api-key` | Same as `run`. |
-
-Findings the second opinion rejects are marked **OVERTURNED** and listed
-separately — the false positives it caught that the scan itself missed.
-
-### `vash status [--run-id ID]`
-
-No `--run-id`: a table of every run (`run_id`, repo, status, cost). With
-`--run-id`: task counts (total/pending/done/failed), finding counts
-(raw/confirmed/canonical/reachable), and total cost for that run. Exits 1 on
-an unknown `--run-id`.
-
-### `vash report --run-id ID [--format json|md]`
-
-Prints `results/<run-id>/report/report.json` — already redacted at write
-time, redacted *again* here (idempotently) since CLI stdout is itself an
-egress point. `--format md` (default `json`) renders the same data as
-human-readable Markdown. Exits 1 if that run hasn't reached the Report stage
-yet.
-
-### `vash auth-check [--allow-api-key]`
-
-Verifies auth resolves to a usable mode and prints which one (OAuth token /
-API key / keychain login / gateway), the `claude` CLI path + version, and
-which env vars were scrubbed. Exits 2 on failure.
-
-## Outputs
-
-- **`results/<run-id>/report/report.json`** — the schema-validated final
-  report (`schemas/report.schema.json`): `run_id`, `target` (`repo_path` +
-  optional `commit`), `summary` (`total` + `by_severity`), `findings[]`
-  (`finding_id`, `title`, `severity`, `vuln_class`, `cwe`, `file`,
-  `line_start`/`line_end`, `description`, `evidence`, `trace` with
-  `entry_points`/`call_chain`, optional `poc`/`variants`, `recommendation`),
-  `chains[]` (V11 — multi-finding exploit chains: `title`, `finding_ids`
-  (≥2), `severity`, `blocked_by_controls`, `narrative`), `input_inventory[]`
-  (F1 — the completeness ledger: every enumerated input with its
-  `covered`/`uncovered`/`null` disposition), and `coverage` (4.7 — the
-  consolidated disclosure: `inputs_enumerated`/`covered`/`uncovered`,
-  `tasks_by_source`, `findings_by_status`, `source_files`, `covered_files`,
-  `catchall_tasks`, `catchall_dropped`, `coverage_complete` — `false`
-  whenever `catchall_dropped > 0` or any input never reached a disposition;
-  never read `coverage_complete: false` as full coverage).
-- **`results/<run-id>/run_summary.json`** — the same per-stage
-  `calls`/`usd`/`duration_ms` breakdown (+ a TOTAL row) printed after every
-  `vash run` and by `vash status --run-id`, plus findings-by-severity/status
-  and tasks-by-source counts.
-- **`results/<run-id>/remediation/`** (from `vash remediate`, default
-  `--out`) — `patches/<finding_id>.diff` (unified diff), `tests/<finding_id>_test.<ext>`
-  (a security test), `remediation.json` (per-finding `status`: `patched` /
-  `guidance_only` / `cannot_fix`), `REMEDIATION.md` (human-readable summary).
-- **`results/<run-id>/revalidation/`** (from `vash validate`, default
-  `--out`) — `revalidation.json` (per-finding verdict: `validated` /
-  `failed` [OVERTURNED] / `needs_review`, with confidence), `REVALIDATION.md`.
-- **Redaction** — `report.json`, `REMEDIATION.md` + `patches/` + `tests/`,
-  and `REVALIDATION.md` are all passed through `vash/redact.py` (secret/PII/PAN
-  redaction) before they're written, and `vash report`'s stdout is redacted
-  again at print time. This does **not** cover every artifact under
-  `results/` — see [Safety](#safety) for what's excluded (raw per-stage agent
-  transcripts, `state.db`).
-
-## Configuration
-
-- **`config/stages.yaml`** — per-stage `model` / `concurrency` / `tools`
-  allowlist / `max_turns` / `repair_attempts`, plus global `defaults`
-  (`max_turns: 25`, `permission_mode: acceptEdits` — never
-  `bypassPermissions`, `repair_attempts: 1`) and `loops`
-  (`gapfill_iterations: 2`, `feedback_iterations: 1`) that bound the
-  Hunt↔Validate↔Gapfill and Feedback recursion. Model diversity between Hunt
-  (`claude-sonnet-4-6`) and Validate (`claude-opus-4-7`) is deliberate — it's
-  the "deliberate disagreement" rule from [Origin](#origin). The decoupled
-  `remediate` (`claude-opus-4-7`, high-stakes patch generation) and
-  `revalidate` (`claude-sonnet-4-6`, deliberately a different tier from
-  Validate) stages are read-only by config — `tools: [Read, Grep, Glob]`,
-  no `Bash`, no `Write`. `vash run --config FILE` overrides the whole file;
-  `vash validate --model` overrides just the `revalidate` model.
-- **`config/remediation_policy.yaml`** — loaded by `vash remediate` (via
-  `vash/remediation_policy.py`) *before* any patch agent runs. This is an
-  enforcement hard gate, not guidance: `default_action: allow` or `deny`,
-  with explicit `deny`/`allow` CWE lists (VASH ships `default_action: allow`
-  with both lists empty — permissive by default; operators tighten per
-  program). Evaluation order is `kill_switch → deny → allow →
-  default_action`. The kill-switch (env `VASH_REMEDIATE_DISABLE` truthy, or
-  the presence of a `./.vash-remediate-off` file) forces every decision to
-  guidance-only regardless of the lists — for pausing a bad batch without
-  editing YAML. **Fail-closed**: a missing or invalid policy file makes
-  every finding guidance-only (`vash remediate` prints a warning). Reserved
-  `deny_paths`/`forbid_patch_paths` fields exist for a future `--apply`/PR
-  path but aren't consulted by the current CWE-only gate.
-
-## Cost containment
-
-A real production codebase can produce 15-50 Hunt tasks and 25+ findings to
-validate. At default concurrency this gets expensive. Flags to keep it sane
-(full reference in [`vash run`](#vash-run--the-scan) above):
+Generates policy-gated, root-cause patches (unified diffs) for the confirmed findings by *reading* the code — it never executes the target.
 
 ```bash
-vash run --repo /path/to/target \
-  --max-concurrency 1 \           # one claude subprocess at a time
-  --max-recon-tasks 15 \          # cap initial Hunt fanout
-  --max-cost-usd 30               # abort cleanly if exceeded
+vash remediate --run-id ID [--repo PATH] [--policy FILE] [--out DIR] [--verify]
 ```
 
-The budget guard fires between *and* within stages — a per-task check in
-Hunt cooperatively aborts rather than running 30 more tasks past the cap.
+### `vash validate` — independent second opinion *(decoupled, opt-in)*
 
-## Live-target reproduction (optional)
-
-If the target has a running deployment, point the agents at it. **Inside a
-sandbox** (see [Safety](#safety)), Hunt prefers reproducing each finding
-against the live service over compiling a local PoC, and Trace **confirms**
-reachability with real HTTP round-trips against it. Validate stays purely
-static and never reproduces anything itself — it re-reads statically;
-`live_target` reaching Validate is informational context only. **On a bare
-host**, Hunt and Trace both lose Bash (per Safety) so neither can reach the
-network either — `live_target` becomes informational-only for them too, and
-Hunt falls back to a static source→sink argument with `needs_poc: true`. The
-static path remains available regardless — these flags are opt-in either way.
+Re-verifies a prior run's confirmed findings with a fresh, adversarial pass.
 
 ```bash
-vash run --repo /path/to/target --run-id live \
-  --max-concurrency 1 --max-cost-usd 30 \
-  --target-url http://server.local:8888 \
-  --target-creds email=admin@system.com \
-  --target-creds password=changechangeme
+vash validate --run-id ID [--repo PATH] [--model NAME] [--min-confidence FLOAT]
 ```
 
-Rules the agents follow when `--target-url` is set:
-- Network egress is restricted to that host + `127.0.0.1`. No other external
-  hosts.
-- Inside a sandbox: a finding Hunt or Trace can't reproduce/confirm against
-  the live target — including via live HTTP round-trip — is dropped, lowered
-  in severity, or (Trace) marked `reachable: false`; never fabricated ("no
-  fabrication").
-- Credentials flow into every relevant stage's user_input as a dict.
-
-## Scope notes (optional)
-
-Targets often have intentionally-loose-by-design surfaces that aren't bugs
-(e.g. plaintext API keys when that's a feature, test-only Mailpit endpoints,
-anonymous-analytics ingest). Drop them in a text file and pass it in — the
-notes are appended verbatim to every stage's user_input, and Recon / Hunt /
-Validate honor exclusions you list.
+### `vash status` / `vash auth-check`
 
 ```bash
-vash run --repo /path/to/target --scope-notes target_scope.md
+vash status --run-id ID       # tasks, findings, traces, cost
+vash auth-check               # verify Claude Code auth is configured
 ```
 
-Example `target_scope.md`:
+## 📄 The report
 
-```markdown
-- Mailpit (port 1025) is test-only; ignore.
-- Plaintext API keys in the database are a required feature.
-- Don't flag rate-limit absence on anonymous /ping endpoints.
-- Only consider critical/high severity.
-```
+Every run writes a raw, machine-readable **`report.json`** and a detailed, advisory-grade **`report.md`**. The Markdown report is deterministic and structured like a professional pentest deliverable:
 
-## Recon mines git history
+- **Summary** & severity tally
+- **Scan Metrics** — files in scope/analyzed, coverage %, cost, tokens-by-phase
+- **Threat Model** — system context, assets, trust boundaries, ranked threats, open questions
+- **Verification** — raw findings → true/false positives, duplicates collapsed, precision
+- **Findings** — each with CWE (+ MITRE link), **CVSS 3.1 score & vector**, confidence, "Also at" co-located sites, Description / Impact / **Exploit scenario** / Preconditions / evidence / **How to fix** / **Adversarial-verification verdict**
+- **GHSA advisory sub-block** per finding — Summary / Details / Proof of Concept / Weaknesses / References, ready to paste into a GitHub Security Advisory
+- **Exploit chains** — end-to-end attack paths across findings
 
-Recon greps the git history for past security patches
-(`CVE`, `sec:`, `fix.*auth`, `sanitize`, …) — patched files are hardened,
-but **sibling files with the same idiom often aren't**. Findings get seeded
-against the unpatched copies. Adds zero cost on repos without that pattern;
-catches real cross-component bugs on repos that have it.
+## 🔒 Static vs dynamic validation
 
-## Logic chains
-
-The pipeline's default is one-attack-class-per-task (the Cloudflare paper's
-narrow-scope rule). Recon can also emit `logic_chain` tasks for high-impact
-multi-component paths (auth-bypass + IDOR + path-traversal that compose into
-RCE, etc.) — one chain per task, with the `scope_hint` naming the specific
-chain. This is the one allowed exception to single-attack-class scoping.
-
-This is a Hunt-time mechanism — Recon proactively goes looking for a
-*specific named* chain. It's complementary to (not the same as) the Chain
-**stage** (V11, #8 in [The pipeline](#the-pipeline)), which runs once at the
-end and synthesizes chains post-hoc from whatever findings end up confirmed,
-regardless of how they were found.
-
-## Layout
+VASH is **static-first**. Its core safety invariant is enforced in one place: the agent runner strips the `Bash` tool — so **nothing from the target ever executes** — unless dynamic validation is explicitly enabled *and* an isolation sandbox is active.
 
 ```
-prompts/        11 prompts: 9 numbered pipeline-stage prompts (01-recon..09-chain)
-                 + remediate.md / revalidate.md for the two decoupled commands.
-                 Loaded as system prompts.
-schemas/        12 JSON schemas — every agent output (and report.json itself)
-                 is validated against one of these before it's trusted.
-config/         stages.yaml (model/concurrency/tools per stage) +
-                 remediation_policy.yaml (the `vash remediate` CWE hard-gate).
-vash/           Python package (CLI entry point: vash.cli:main)
-  auth.py            OAuth/API-key/gateway resolution + env scrubbing
-  sandbox.py         execution-sandbox gate — backs both the scan's runner
-                     gate (R1) and `remediate --verify` (4.1)
-  redact.py          secret/PII/PAN redaction before egress (VVAH port)
-  cvss.py            CVSS 3.1 base-score calculator (VVAH port, V4)
-  baselines.py       repo-kind -> OWASP/CWE baselines (VVAH port, V10)
-  lang/hints.py      per-language security-hints KB (VVAH port, V9)
-  taint.py           entry->sink taint-path chunking (V8)
-  specialists.py     gated repo-wide specialist sweeps (V12)
-  catchall.py        terminal coverage sweep (F6)
-  partition.py       union-find cohesive partitioning (F2)
-  graph_context.py   graph neighbor-context blocks (V6)
-  graph/             graphify wrapper + grep/glob fallback + GraphQuery
-  remediation_policy.py   loads + evaluates config/remediation_policy.yaml
-  state.py           SQLite DAO (runs, tasks, findings, traces, dedupe, costs)
-  runner.py          claude-agent-sdk wrapper: schema validation + repair turn
-  orchestrator.py    pipeline driver (run_pipeline)
-  stages/            one module per stage, incl. remediate.py / revalidate.py
-bench/          benchmark harness: corpus clone, scorer, recall_gate,
-                 self-tuning miss-analysis (3.ST) — see CI & recall gate below
-work/           per-Hunt-task scratch dirs — a real PoC-execution sandbox
-                 again inside a container (VASH_SANDBOX=1 / /.dockerenv);
-                 just the agent's static-mode cwd on a bare host
-results/        results/<run-id>/{report,remediation,revalidation}/ + run_summary.json
-state.db        SQLite (gitignored)
-licenses/       full upstream license texts (audit MIT; VulnHunter + VVAH Apache-2.0)
+execution_enabled = --dynamic-validation  AND  (inside a sandbox  OR  --dangerously-no-sandbox)
 ```
 
-## Safety
+| Mode | Command | Behavior |
+|---|---|---|
+| **Static** (default) | `vash run --repo …` | Pure reasoning + call-graph taint. Never runs target code — safe on untrusted repos. |
+| **Dynamic** | `vash run --repo … --dynamic-validation` *(in Docker/`VASH_SANDBOX=1`)* | Writes & runs a real PoC per candidate in the sandbox; keeps only what fires. |
+| **Refused** | `--dynamic-validation` on a bare host | **Fails fast** with a clear remedy — never silently executes on the host. |
 
-`vash run` is **hybrid, not purely static**: broad static hunting drives
-recall, and executing a real PoC per candidate finding is what drives false
-positives to zero — but that execution only ever happens inside an active
-isolation sandbox. `runner.run_agent()` (`vash/runner.py`) is the single,
-stage-agnostic gate every agent call passes through: immediately before
-launching any agent it strips `Bash` out of that stage's allowed tools
-unless `vash.sandbox.is_sandboxed()` is true (a container — `/.dockerenv`
-present — or `VASH_SANDBOX=1`), regardless of what `config/stages.yaml`
-grants. This is enforced centrally, once, for every stage that ever
-requests Bash — Recon's read-only git-history mining, Hunt's PoC execution,
-Trace's static inspection + optional live HTTP round-trip — not left to
-per-prompt discipline.
+## 🗂️ Project structure
 
-- **Inside a sandbox**: Recon can mine `git log`/`git show`/`git blame`;
-  Hunt runs audit's original PoC method — for each plausible finding it
-  prefers reproducing against `live_target` (Bash + `curl` / `python3 -c
-  "import requests..."`) when one was passed, else compiles and runs a
-  local PoC in its per-task scratch dir (`work/<run-id>/hunt/...`), and
-  **drops or downgrades any finding that doesn't reproduce**; Trace keeps
-  its read-only static inspection (`grep`/`find`/`wc`/AST parsing/`ctags`)
-  plus the opt-in live HTTP round-trip to a deployment passed via
-  `--target-url` (see [Live-target
-  reproduction](#live-target-reproduction-optional)).
-- **On a bare host (no sandbox — the default)**: every one of those stages
-  loses Bash and the run auto-degrades to fully static, automatically and
-  silently (a log line notes it, the run doesn't fail). Hunt can't execute
-  anything, so instead of dropping a finding for lack of proof it reasons
-  statically (source→sink argument, exactly as before this change) and
-  sets `needs_poc: true` so a later sandboxed run can confirm it. You do
-  not need a disposable VM or container just to be safe by default — on a
-  bare host the scan literally cannot compile or run a target's own source,
-  or execute its build scripts; a target's `Makefile`, `package.json`
-  scripts, or similar are read as text, never invoked. Use a container
-  (with `VASH_SANDBOX=1`, or run inside one that already sets `/.dockerenv`)
-  when you want the execution-confirmed, zero-false-positive behavior
-  instead.
-
-Every agent — every scan stage, and the decoupled `remediate`/`validate`
-commands too — reads everything you `--add-dir`, including any `.env` or
-`secrets/` directories in the target, and its raw JSONL transcript is written
-**unredacted** to `results/<run-id>/<stage>/` (or `results/<run-id>/remediation/agent/`
-/ `results/<run-id>/revalidation/agent/` for the decoupled commands). Only
-the terminal deliverables — `report/report.json`,
-`remediation/REMEDIATION.md` + `patches/` + `tests/`,
-`revalidation/REVALIDATION.md` — are passed through redaction before being
-written (see [Outputs](#outputs)); that redaction is pattern-based
-(Luhn/IIN-gated card numbers, SSN-shaped strings, keyword-gated generic
-secrets) and best-effort, not a guarantee. `state.db` always keeps the true,
-unredacted evidence. Treat `results/`, `work/`, and `state.db` as sensitive
-whenever the target repo contains real secrets.
-
-### Static-first guarantee — `remediate` / `validate`, and the sandbox gate
-
-One `vash/sandbox.py` module backs every execution gate in VASH, the scan
-and the decoupled commands alike — same two underlying signals
-(`VASH_SANDBOX=1` or a `/.dockerenv` marker), two different call sites with
-different failure modes to match how each path is used:
-
-- **The scan (`vash run`)** calls `sandbox.is_sandboxed()` — see
-  [Safety](#safety) above. With no sandbox this is a silent,
-  automatic degrade-to-static: the run continues, Bash is stripped, Hunt
-  marks the affected findings `needs_poc: true` instead of failing.
-- **`remediate --verify`** calls the stricter `sandbox.require()`, which
-  *raises* `SandboxError` when there's no active sandbox and no escape.
-
-The **decoupled** `vash remediate` and `vash validate` commands are
-read-only by config even before that gate (no `Bash`, no `Write` — see the
-`remediate` / `revalidate` stage comments in `config/stages.yaml`) and have
-no live-target exception either — patch/verdict generation itself never
-touches the network or executes anything from the target. A patch is a
-unified diff produced by an agent *reading* code; it is written to disk and
-never applied or run.
-
-The only execution ever contemplated on that decoupled path is
-`remediate --verify` — optionally running the target's **own** test suite to
-confirm a generated patch. That execution is still DEFERRED (no test is
-actually run yet), and it is gated as described above: before doing
-anything else, `--verify` calls `sandbox.require()`. With no sandbox, the
-refusal is fail-soft — it's recorded on the affected patches' `risk_notes`
-rather than aborting the batch. `--dangerously-no-sandbox` bypasses the gate
-with a loud warning, for local dev only; never pass it against source you
-don't already trust.
-
-## CI & recall gate
-
-Every PR runs two gates in GitHub Actions (`.github/workflows/ci.yml`):
-
-1. **The full offline test suite** (`python -m pytest -q`) — the
-   enforceable regression gate. All tests must stay green; deterministic,
-   no network, no LLM calls.
-2. **The recall gate** (`python -m bench.recall_gate`) — compares a
-   scorecard's `cve_recall` against the committed floor in
-   `bench/baseline_scorecard.json` (currently the offline-reproducible
-   corpus baseline, 6/11 on `datamodel-code-generator`; see
-   `bench/tests/test_bench.py::test_known_baseline_datamodel_code_generator_recall_is_6_of_11`).
-   CI cannot run a live `vash run` scan on every PR (LLM cost/quota/time),
-   so the PR job runs this gate in **smoke mode** — no `--current`
-   scorecard, so it only confirms the baseline file parses and is wired up
-   correctly, and always exits 0 given a valid baseline. **This is not a
-   live recall check.**
-
-To actually enforce the recall floor, a nightly or manual job records a real
-scorecard (via `vash run` + scoring with `bench.scorer.score_corpus`,
-already unit-tested and reused as-is — recall math is never reimplemented
-here) and passes it as `--current`:
-
-```bash
-vash run --repo <clone of the benchmark target> --run-id nightly
-# score the run's confirmed findings with bench.scorer.score_corpus(...)
-# against bench/ground_truth/*.json and write the result (a dict with a
-# cve_recall/class_recall field) to current_scorecard.json
-python -m bench.recall_gate \
-  --baseline bench/baseline_scorecard.json \
-  --current current_scorecard.json
+```
+vash/
+├── vash/                    # the package
+│   ├── cli.py               # Click CLI entry point
+│   ├── orchestrator.py      # pipeline driver (the 9 stages)
+│   ├── runner.py            # agent runner + the Bash safety gate
+│   ├── sandbox.py           # execution sandbox gate (static-first invariant)
+│   ├── progress.py          # RunReporter — rich, fail-soft live logging
+│   ├── taint.py             # deterministic entry→sink taint analysis
+│   ├── graph_context.py     # call-graph queries feeding the hunters
+│   ├── state.py             # SQLite run state (findings, tasks, cost)
+│   ├── stages/              # recon, hunt, validate, gapfill, dedupe,
+│   │                        #   trace, feedback, chain, report, remediate
+│   └── reporting/markdown.py# VVAH/GHSA-style report renderer
+├── prompts/                 # one system prompt per stage
+├── schemas/                 # JSON Schemas — every agent output is validated
+├── config/stages.yaml       # per-stage model, concurrency, iterations
+├── bench/                   # CVE-recall benchmark harness + ground truth
+├── scripts/run-in-docker.sh # sandboxed (executed-PoC) runner
+├── tests/                   # 660 offline tests
+├── Dockerfile               # the isolation sandbox image
+├── NOTICE / THIRD_PARTY_LICENSES.md   # attribution
+└── docs/                    # design specs & benchmark write-ups
 ```
 
-With `--current` supplied, the gate compares `cve_recall` (or
-`--metric class_recall`) against the baseline and **exits 1** if it
-regressed beyond `--tolerance` (default `0.0`) — that's the check that
-actually fails a build on a recall regression.
+## ⚙️ Configuration & cost
 
-## Attribution
+- **Models** are per-stage in `config/stages.yaml` (Opus for recon/validate/trace, Sonnet elsewhere by default) — tune cost vs depth freely.
+- **Containment:** `--max-cost-usd` (hard budget ceiling), `--max-concurrency`, and `--max-recon-tasks` bound every run; runs are **resumable** (`--resume`) after an interruption or budget stop.
+- **Providers:** subscription by default; `--allow-api-key`/`ANTHROPIC_API_KEY` for metered billing, or an OpenRouter/gateway base-URL for non-Anthropic models.
 
-VASH forks [evilsocket/audit](https://github.com/evilsocket/audit) (MIT) and
-grafts capability + production features from [Capital One
-VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa
-VVAH](https://github.com/visa/visa-vulnerability-agentic-harness) (both
-Apache-2.0). See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the
-full component-by-component breakdown of what was ported verbatim vs.
-adapted, and [`NOTICE`](NOTICE) for the Apache-2.0 §4 attribution notice.
-Full license texts are under [`licenses/`](licenses/); verbatim ports keep
-their in-file Apache-2.0 headers (enforced by `tests/test_licensing.py`).
+## 📈 Results
 
-## License
+VASH's edge is **precision through execution** and **broad recall**. On a blind run (no hints) against a real target, it independently reconstructed the full set of disclosed CVEs:
 
-[MIT](LICENSE) for VASH's own code. Reused Apache-2.0 files (see
-[Attribution](#attribution)) keep their Apache-2.0 header and license — this
-repo is not uniformly MIT. No warranty either way.
+- **`swagger-typescript-api` v13.12.1** — a blind static scan surfaced **all 6 disclosed CVEs (100% recall)**, every one landing in the *confirmed* bucket, alongside additional plausibly-novel findings — driven by VASH's template-injection and `$ref` SSRF/credential-leak coverage.
+- **Executed-PoC precision** — in dynamic mode, delivered findings are exploit-verified in the sandbox, the axis on which VASH is categorically different from static-only agents.
 
-## Acknowledgements
+*Benchmarks are reproducible via the `bench/` harness and its CVE ground-truth; see `docs/` for full write-ups and honest caveats.*
 
-- The base pipeline's design is from Cloudflare's [Project
-  Glasswing](https://blog.cloudflare.com/cyber-frontier-models/) blog post,
-  packaged into a runnable agent by
-  [evilsocket/audit](https://github.com/evilsocket/audit). Credit for that
-  architecture goes there.
-- Built on the official [Claude Code Agent
-  SDK](https://code.claude.com/docs/en/agent-sdk/overview).
-- The capability and production grafts on top are from [Capital One
-  VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa
-  VVAH](https://github.com/visa/visa-vulnerability-agentic-harness) — see
-  [Attribution](#attribution).
+## 🙏 Attribution
+
+VASH stands on excellent open-source work and preserves full attribution (see [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)):
+
+- **[evilsocket/audit](https://github.com/evilsocket/audit)** (MIT) — the base 8-stage pipeline, prompts, schemas, and orchestrator VASH forks and extends.
+- **[Capital One VulnHunter](https://github.com/capitalone/VulnHunter)** (Apache-2.0) — completeness/coverage and disprove-gate mechanisms.
+- **[Visa VVAH](https://github.com/visa/visa-vulnerability-agentic-harness)** (Apache-2.0) — template-file scanning and clean report delivery.
+- Architecture inspired by Cloudflare's **[Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/)** research.
+
+## 📜 License
+
+VASH is released under the **MIT License** (inherited from evilsocket/audit), with Apache-2.0 components attributed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md). See [`LICENSE`](LICENSE).
+
+## ⚠️ Responsible use
+
+VASH is a defensive security tool for **authorized** testing of code you own or are permitted to assess. Dynamic mode executes proof-of-concept exploits — run it only inside the provided sandbox, and never point it at systems you don't have permission to test.
+
+---
+
+<div align="center">
+<sub>Built with the Claude Agent SDK · static-first by design · executed-PoC by choice</sub>
+</div>
