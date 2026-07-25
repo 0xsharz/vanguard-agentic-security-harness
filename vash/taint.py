@@ -174,7 +174,6 @@ PYTHON_SINKS: dict[str, list[re.Pattern]] = {
 JAVASCRIPT_SINKS: dict[str, list[re.Pattern]] = {
     "command_injection": [re.compile(p) for p in (
         r"child_process\.(?:exec|execSync|spawn|spawnSync|execFile)\s*\(",
-        r"\.exec(?:Sync)?\s*\(",
         r"\bshell\s*:\s*true\b",
     )],
     "code_injection": [re.compile(p) for p in (

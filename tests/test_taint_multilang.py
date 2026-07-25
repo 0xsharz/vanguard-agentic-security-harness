@@ -19,6 +19,7 @@ from pathlib import Path
 from vash.graph.query import GraphQuery
 from vash.graph.schema import SCHEMA_VERSION, GraphDocument, Node
 from vash.taint import (
+    CSHARP_SINKS,
     GO_SINKS,
     JAVA_SINKS,
     JAVASCRIPT_SINKS,
@@ -76,8 +77,13 @@ def test_all_class_keys_are_known():
     known = {"command_injection", "code_injection", "sql_injection", "ssrf",
              "path_traversal", "deserialization", "ssti", "xxe",
              "prototype_pollution", "jndi_injection"}
-    for table in (JAVASCRIPT_SINKS, JAVA_SINKS, GO_SINKS):
+    for table in (JAVASCRIPT_SINKS, JAVA_SINKS, GO_SINKS, CSHARP_SINKS):
         assert set(table).issubset(known)
+
+
+def test_js_exec_does_not_flag_regex_exec():
+    assert not _matches(JAVASCRIPT_SINKS, "command_injection", "const m = pattern.exec(input);")
+    assert _matches(JAVASCRIPT_SINKS, "command_injection", "child_process.exec(userInput)")
 
 
 # ---- find_sinks integration: language-parametric file scan ----------------

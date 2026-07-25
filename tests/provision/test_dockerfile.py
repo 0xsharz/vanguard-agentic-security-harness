@@ -57,3 +57,22 @@ def test_no_known_ecosystem_returns_none(tmp_path):
     r = render_dockerfile(fingerprint(repo), repo)
     assert r.source == "none"
     assert r.dockerfile is None
+
+
+def test_templates_poetry_pyproject_python(tmp_path):
+    repo = _mk(tmp_path, {"app.py": "x=1\n", "pyproject.toml": "[tool.poetry]\nname='x'\n"})
+    r = render_dockerfile(fingerprint(repo), repo)
+    assert r.source == "template"
+    assert "python:" in r.dockerfile
+
+
+def test_primary_language_wins_over_vendored_manifest(tmp_path):
+    # python repo (2 .py) with a vendored frontend/package.json (1 .js): must pick python, not node
+    repo = _mk(tmp_path, {
+        "a.py": "1\n", "b.py": "2\n", "pyproject.toml": "[tool.poetry]\nname='x'\n",
+        "frontend/app.js": "1\n", "frontend/package.json": "{}",
+    })
+    fp = fingerprint(repo)
+    assert fp.primary_language == "python"
+    r = render_dockerfile(fp, repo)
+    assert "python:" in r.dockerfile        # NOT node

@@ -58,10 +58,27 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "build": "python -c \"import sys; print(sys.version)\"",
         "test": "pytest -q || true",
     },
+    "poetry": {
+        "base": "python:{ver}-slim",
+        "default_ver": "3.11",
+        "ver_key": "python",
+        "install": "RUN pip install poetry && poetry install --no-root || true",
+        "build": "python -c \"import sys; print(sys.version)\"",
+        "test": "poetry run pytest -q || true",
+    },
 }
 
 # preference order when a repo declares several ecosystems.
-_PRIORITY = ["maven", "gradle", "npm", "go-modules", "dotnet", "pip"]
+_PRIORITY = ["maven", "gradle", "npm", "go-modules", "dotnet", "pip", "poetry"]
+
+# ecosystem -> language it belongs to, so _pick_ecosystem can prefer the
+# ecosystem matching the repo's dominant language over one from a vendored
+# manifest (e.g. a Python repo with a vendored frontend/package.json).
+_ECOSYSTEM_LANG = {
+    "npm": "javascript", "yarn": "javascript", "pnpm": "javascript",
+    "maven": "java", "gradle": "java", "go-modules": "go",
+    "dotnet": "csharp", "pip": "python", "poetry": "python",
+}
 
 
 @dataclass
@@ -75,10 +92,14 @@ class RenderedRecipe:
 
 
 def _pick_ecosystem(fp: ProjectFingerprint) -> str | None:
-    for bs in _PRIORITY:
-        if bs in fp.build_systems:
-            return bs
-    return None
+    present = [bs for bs in _PRIORITY if bs in fp.build_systems]
+    if not present:
+        return None
+    if fp.primary_language:
+        for bs in present:
+            if _ECOSYSTEM_LANG.get(bs) == fp.primary_language:
+                return bs
+    return present[0]
 
 
 def render_dockerfile(fp: ProjectFingerprint, repo_path: Path) -> RenderedRecipe:
