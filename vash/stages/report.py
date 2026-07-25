@@ -47,7 +47,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         }
         _attach_input_inventory(db, ctx.run_id, empty)
         _attach_coverage(db, ctx.run_id, empty)
-        out_path.write_text(json.dumps(redact_json(empty), indent=2))
+        redacted = redact_json(empty)
+        out_path.write_text(json.dumps(redacted, indent=2))
+        _write_markdown_report(ctx, db, redacted)
         log.info("[%s] report: no reachable findings — wrote empty report to %s",
                  ctx.run_id, out_path)
         return out_path
@@ -84,7 +86,9 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         _attach_scan_metrics(db, ctx.run_id, fallback)
         _attach_verification(db, ctx.run_id, fallback)
         _attach_cvss(db, ctx.run_id, fallback)
-        out_path.write_text(json.dumps(redact_json(fallback), indent=2))
+        redacted = redact_json(fallback)
+        out_path.write_text(json.dumps(redacted, indent=2))
+        _write_markdown_report(ctx, db, redacted)
         return out_path
 
     db.record_cost(ctx.run_id, "report", None, result.raw_result_message)
@@ -111,11 +115,28 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     _attach_scan_metrics(db, ctx.run_id, payload)
     _attach_verification(db, ctx.run_id, payload)
     _attach_cvss(db, ctx.run_id, payload)
-    out_path.write_text(json.dumps(redact_json(payload), indent=2))
+    redacted = redact_json(payload)
+    out_path.write_text(json.dumps(redacted, indent=2))
+    _write_markdown_report(ctx, db, redacted)
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
              len(payload.get("input_inventory", [])), out_path)
     return out_path
+
+
+def _write_markdown_report(ctx: StageContext, db: StateDB, payload: dict) -> None:
+    """Task 4: also emit a human-facing VVAH/GHSA-style `report.md` alongside
+    `report.json`. Rendered from the ALREADY-REDACTED payload (the same object
+    written to report.json) so the Markdown never carries anything the JSON
+    doesn't. Fail-soft: any render/write failure is logged and leaves
+    report.json — the authoritative machine artifact — completely intact."""
+    try:
+        from vash.reporting.markdown import render_report
+        md = render_report(payload, db, ctx.run_id)
+        (ctx.results_dir("report") / "report.md").write_text(md)
+    except Exception as e:  # additive artifact — never break report emission
+        log.warning("[%s] markdown render failed (report.json intact): %s",
+                    ctx.run_id, e)
 
 
 def _attach_input_inventory(db: StateDB, run_id: str, payload: dict) -> None:

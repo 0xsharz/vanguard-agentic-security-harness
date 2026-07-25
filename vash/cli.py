@@ -255,7 +255,11 @@ def report(run_id: str, fmt: str) -> None:
         if fmt == "json":
             click.echo(json.dumps(payload, indent=2))
         else:
-            click.echo(_render_markdown_report(payload))
+            # Task 4: the VVAH/GHSA-style renderer. report.json (the json
+            # path above) stays the authoritative raw artifact — this is a
+            # human-facing presentation over the same enriched payload.
+            from vash.reporting.markdown import render_report
+            click.echo(render_report(payload, db, run_id))
     finally:
         db.close()
 
