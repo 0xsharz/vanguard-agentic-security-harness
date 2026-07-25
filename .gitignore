@@ -66,3 +66,8 @@ notes.db
 
 /REPORT-*.md
 /REPORT.md
+
+# Run-scoped state DBs + scratch (regenerated per run)
+*-state.db
+.dmcg-*
+.tables
