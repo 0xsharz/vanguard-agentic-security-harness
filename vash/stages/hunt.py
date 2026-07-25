@@ -45,6 +45,18 @@ async def run_hunt(
 
     counters = {"findings": 0, "tasks_done": 0, "tasks_failed": 0, "skipped": 0}
 
+    def _report_task_done() -> None:
+        # F2 (Task 2): rich run-progress. Guarded — RunReporter methods are
+        # already fail-soft, but this call site must not assume a reporter
+        # is set (e.g. StageContext built without one).
+        if ctx.reporter:
+            ctx.reporter.task_done(
+                "hunt",
+                done=counters["tasks_done"] + counters["tasks_failed"] + counters["skipped"],
+                total=len(pending),
+                cost=db.total_cost(ctx.run_id),
+            )
+
     async def _one(task: Task) -> None:
         async with sem:
             if aborted.is_set():
@@ -122,11 +134,13 @@ async def run_hunt(
                 log.warning("[%s] hunt task %s failed: %s", ctx.run_id, task.task_id, e)
                 db.update_task_status(task.task_id, "failed")
                 counters["tasks_failed"] += 1
+                _report_task_done()
                 return
             except Exception as e:
                 log.error("[%s] hunt task %s unexpected error: %s", ctx.run_id, task.task_id, e)
                 db.update_task_status(task.task_id, "failed")
                 counters["tasks_failed"] += 1
+                _report_task_done()
                 return
 
             payload = result.payload
@@ -141,6 +155,7 @@ async def run_hunt(
             db.add_artifact(ctx.run_id, "hunt", task.task_id, "scratch_dir",
                             str(scratch))
             counters["tasks_done"] += 1
+            _report_task_done()
             log.info(
                 "[%s] hunt %s: %d findings (cost=$%.4f)",
                 ctx.run_id, task.task_id, len(findings), result.cost_usd or 0.0,

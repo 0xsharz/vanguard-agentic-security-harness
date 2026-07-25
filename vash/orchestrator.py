@@ -13,6 +13,7 @@ from vash import sandbox, stages
 from vash.catchall import build_catchall_tasks
 from vash.config import HarnessConfig
 from vash.graph import GraphQuery, build_or_load
+from vash.progress import RunReporter
 from vash.runner import QuotaExhaustedError
 from vash.specialists import active_specialists, build_specialist_tasks
 from vash.state import StateDB, Task
@@ -465,6 +466,12 @@ async def run_pipeline(
     ctx.execution_enabled = sandbox.resolve_execution(
         dynamic_validation=dynamic_validation, allow_no_sandbox=allow_no_sandbox)
 
+    # F2 (Task 2): construct once per run. Presentation-only + fail-soft (see
+    # vash.progress.RunReporter) — a fresh default Console, NOT vash.cli's
+    # console: cli.py imports run_pipeline from this module, so importing
+    # vash.cli here would create an import cycle.
+    ctx.reporter = RunReporter(run_id=run_id)
+
     if db.get_run(run_id) is None:
         db.create_run(str(repo_path.resolve()), run_id)
         log.info("[%s] starting fresh pipeline run against %s", run_id, repo_path)
@@ -502,9 +509,17 @@ async def run_pipeline(
                 f"${spent:.4f} >= ${max_cost_usd:.4f}"
             )
 
+    def _stage_start(stage_name: str) -> None:
+        # F2 (Task 2): rich run-progress banner. Guarded — reporter methods
+        # are already fail-soft, but the orchestrator itself must not crash
+        # if reporter is None (e.g. a future caller that doesn't set one).
+        if ctx.reporter:
+            ctx.reporter.stage_start(stage_name, model=ctx.stage(stage_name).model)
+
     try:
         # ---- Stage 1: Recon ----
         _budget_check("recon")
+        _stage_start("recon")
         recon_kwargs = {} if max_recon_tasks is None else {"max_tasks": max_recon_tasks}
         await stages.run_recon(ctx, db, **recon_kwargs)
 
@@ -536,17 +551,20 @@ async def run_pipeline(
         # ---- Stages 2-3-4 loop: Hunt → Validate → Gapfill ----
         for i in range(config.gapfill_iterations + 1):
             _budget_check(f"hunt(iter={i})")
+            _stage_start("hunt")
             findings_added = await stages.run_hunt(ctx, db, budget_check=_budget_check)
             if findings_added == 0 and i > 0:
                 log.info("[%s] no new findings — exiting Hunt/Gapfill loop", run_id)
                 break
 
             _budget_check(f"validate(iter={i})")
+            _stage_start("validate")
             await stages.run_validate(ctx, db)
 
             if i >= config.gapfill_iterations:
                 break  # final iteration: don't gapfill again
             _budget_check(f"gapfill(iter={i})")
+            _stage_start("gapfill")
             new_tasks = await stages.run_gapfill(ctx, db)
             if new_tasks == 0:
                 log.info("[%s] gapfill produced 0 tasks — exiting loop", run_id)
@@ -561,25 +579,32 @@ async def run_pipeline(
 
         # ---- Stage 5: Dedupe ----
         _budget_check("dedupe")
+        _stage_start("dedupe")
         await stages.run_dedupe(ctx, db)
 
         # ---- Stage 6: Trace ----
         _budget_check("trace")
+        _stage_start("trace")
         await stages.run_trace(ctx, db)
 
         # ---- Stage 7: Feedback (re-runs Hunt/Validate/Dedupe/Trace) ----
         for i in range(config.feedback_iterations):
             _budget_check(f"feedback(iter={i})")
+            _stage_start("feedback")
             new_tasks = await stages.run_feedback(ctx, db)
             if new_tasks == 0:
                 break
             _budget_check(f"feedback-hunt(iter={i})")
+            _stage_start("hunt")
             await stages.run_hunt(ctx, db)
             _budget_check(f"feedback-validate(iter={i})")
+            _stage_start("validate")
             await stages.run_validate(ctx, db)
             _budget_check(f"feedback-dedupe(iter={i})")
+            _stage_start("dedupe")
             await stages.run_dedupe(ctx, db)
             _budget_check(f"feedback-trace(iter={i})")
+            _stage_start("trace")
             await stages.run_trace(ctx, db)
 
         # ---- Stage 8: Chain (V11) — construct multi-step exploit chains ----
@@ -587,10 +612,12 @@ async def run_pipeline(
         # their own severity; per-finding CVSS (V4) stays authoritative. Fail-
         # soft inside run_chain — never aborts the run.
         _budget_check("chain")
+        _stage_start("chain")
         await stages.run_chain(ctx, db)
 
         # ---- Stage 9: Report ----
         _budget_check("report")
+        _stage_start("report")
         report_path = await stages.run_report(ctx, db)
 
         db.finish_run(run_id, "completed")
@@ -620,6 +647,10 @@ async def run_pipeline(
             )
         except Exception as e:  # fail-soft — summary emit must never fail a completed run
             log.warning("[%s] run summary emit failed (run still completed): %s", run_id, e)
+
+        # ---- F2 (Task 2): rich run-progress summary (presentation only) ----
+        if ctx.reporter:
+            ctx.reporter.run_summary(db, run_id)
 
         return report_path
 

@@ -131,6 +131,14 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
             payload = result.payload
             if verdict == "confirmed":
                 payload = _apply_cvss(db, f.finding_id, payload)
+                # F2 (Task 2): rich run-progress. Guarded — RunReporter
+                # methods are already fail-soft, but this call site must not
+                # assume a reporter is set.
+                if ctx.reporter:
+                    ctx.reporter.finding_confirmed(
+                        severity=f.severity, vuln_class=f.vuln_class,
+                        file=f.file, line=f.line_start, confidence=f.confidence,
+                    )
             db.set_finding_validation(f.finding_id, verdict, payload)
             db.record_cost(ctx.run_id, "validate", f.finding_id, result.raw_result_message)
             db.add_artifact(ctx.run_id, "validate", f.finding_id, "jsonl",
