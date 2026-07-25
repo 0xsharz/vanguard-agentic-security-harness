@@ -59,6 +59,25 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
      name the safer API, mention the input validation. Avoid vague
      "validate user input" advice.
    - `variants`: list other member finding_ids from the dedupe group.
+   - `cvss`: a CVSS 3.1 vector and base score matching this finding's
+     severity and vuln_class. If the finding's `validation` object (in
+     `ready_findings`) already carries a `cvss_vector`/`cvss_score`, use
+     that — it was computed deterministically from what the validator
+     observed, which is more accurate than a guess. Otherwise construct a
+     vector consistent with how an attacker would actually reach and
+     exploit this bug (network vs local access, privileges required, user
+     interaction, C/I/A impact). Include `score`, `severity` (matching this
+     finding's `severity`), and `vector`.
+   - `impact`: one or two sentences on what an attacker actually gains
+     (data read/write, code execution, lateral movement) — not a
+     restatement of the vuln class.
+   - `exploit_scenario`: a short, concrete narrative of an attacker with the
+     access implied by `trace.entry_points` reaching and triggering this.
+   - `preconditions`: array of conditions that must hold for the exploit to
+     work (auth level, feature flag, network position). Empty array if none.
+   - `how_to_fix`: the same remediation direction as `recommendation`,
+     expanded with the specific function/API/validation to change where you
+     have enough context — the field a developer actually acts on.
 2. Aggregate `summary.total` and `summary.by_severity` counts.
 3. Validate the JSON against `schemas/report.schema.json` mentally
    before emitting. If a previous turn told you the output failed
@@ -80,6 +99,29 @@ your output, copying each chain's `title`, `finding_ids`, `severity`,
 invent chains, and do **not** let a chain's severity change any individual
 finding's `severity` — the per-finding severity (CVSS-derived, V4) stays
 authoritative. If `chains` is absent or empty, omit the `chains` array entirely.
+
+# Threat model
+
+Emit a top-level `threat_model`, synthesized from the recon context and
+findings already in your `user_input` — not fresh analysis; you don't have
+tool access to go discover more. It must reflect what THIS run actually
+found, not a generic template:
+
+- `system_context`: one paragraph — what the system does and how it's
+  exposed, drawn from `target` and the findings' files/entry points.
+- `assets`: things worth protecting that the findings touch (data store,
+  credentials, internal service) — `{name, description, sensitivity}`.
+- `trust_boundaries`: points where trust changes that the findings actually
+  cross (e.g. unauthenticated HTTP -> internal service) — `{name, description}`.
+- `ranked_threats`: the findings grouped into threats and ranked by how much
+  each matters for this system — `{threat, rank, rationale}`. This is not a
+  copy of the findings list; group related findings into threats.
+- `open_questions`: things you cannot resolve from recon + findings alone
+  (needs a human, or more scanning). Empty array if none.
+
+If you have too little context to synthesize a responsible threat model
+(e.g. no recon, one isolated finding), omit `threat_model` entirely rather
+than inventing generic content.
 
 # Resolved input inventory (completeness artifact)
 
@@ -112,6 +154,16 @@ that did **not** sweep every eligible file. In that case your prose (the
 was exhaustive — state plainly that coverage is INCOMPLETE (N files not
 swept) rather than let silence read as "everything was checked." Never claim
 or imply full coverage when the cap dropped files.
+
+# Scan metrics & verification
+
+The report also carries `scan_metrics` (files in scope/analyzed,
+coverage%, duration, cost, tokens by phase) and `verification` (raw
+findings, true/false positives, needs-more-info, duplicates collapsed,
+precision%) objects, injected from run state after you emit your JSON.
+**Do NOT synthesize these yourself** — omit both from your output entirely,
+the same way you omit `input_inventory` and `coverage`; any value you write
+for them is overwritten.
 
 # Constraints
 

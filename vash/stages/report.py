@@ -76,6 +76,14 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         _attach_coverage(db, ctx.run_id, fallback)
         _attach_cwe(db, ctx.run_id, fallback)
         _attach_variants(db, ctx.run_id, fallback)
+        # Task 3: report enrichment — scan metrics / verification funnel /
+        # CVSS baseline, same authoritative post-hoc treatment as CWE/
+        # coverage/variants above (metrics+verification are always
+        # state-sourced; CVSS only fills a gap the fallback builder left,
+        # never overwrites it).
+        _attach_scan_metrics(db, ctx.run_id, fallback)
+        _attach_verification(db, ctx.run_id, fallback)
+        _attach_cvss(db, ctx.run_id, fallback)
         out_path.write_text(json.dumps(redact_json(fallback), indent=2))
         return out_path
 
@@ -96,6 +104,13 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # A2: attach located deduped-sibling references (VVAH "Also at:" parity) —
     # same authoritative post-hoc treatment as CWE/coverage/input-inventory above.
     _attach_variants(db, ctx.run_id, payload)
+    # Task 3: report enrichment — scan metrics / verification funnel / CVSS
+    # baseline, same authoritative post-hoc treatment as CWE/coverage/variants
+    # above (metrics+verification are always state-sourced; CVSS only fills a
+    # gap the agent left, never overwrites it).
+    _attach_scan_metrics(db, ctx.run_id, payload)
+    _attach_verification(db, ctx.run_id, payload)
+    _attach_cvss(db, ctx.run_id, payload)
     out_path.write_text(json.dumps(redact_json(payload), indent=2))
     log.info("[%s] report: %d findings, %d inputs in inventory, written to %s",
              ctx.run_id, len(payload.get("findings", [])),
@@ -202,6 +217,99 @@ def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
         payload["coverage"] = coverage
     except Exception as e:  # fail-soft — coverage must never break the report
         log.warning("[%s] coverage attach failed (continuing): %s", run_id, e)
+
+
+# Baseline CVSS 3.1 (score, vector) keyed by severity band — used only when a
+# report finding carries no cvss of its own (a backfill floor, never an
+# override; see _attach_cvss).
+_CVSS_BASELINE = {
+    "critical": (9.8, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+    "high":     (8.1, "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"),
+    "medium":   (5.3, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N"),
+    "low":      (3.1, "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N"),
+    "informational": (0.0, "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:N/I:N/A:N"),
+}
+
+
+def _attach_cvss(db: "StateDB | None", run_id: str, payload: dict) -> None:
+    """Backfill a CVSS 3.1 baseline (score/severity/vector) onto each report
+    finding that doesn't already carry one — a severity-keyed floor for
+    whatever the report agent (or the fallback builder) left unset. NEVER
+    overwrites an existing `cvss`: the agent is instructed to prefer the
+    real, per-finding vector Validate already computed (prompts/08-report.md)
+    when one is available. Pure over `payload` — does not read `db` — so it
+    degrades safely even when no DB handle is available (e.g. called from the
+    no-agent fallback path with db=None). Fail-soft."""
+    try:
+        for f in payload.get("findings", []):
+            if not f.get("cvss"):
+                score, vector = _CVSS_BASELINE.get((f.get("severity") or "").lower(), (0.0, ""))
+                f["cvss"] = {"score": score, "severity": f.get("severity"), "vector": vector}
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] cvss backfill failed: %s", run_id, e)
+
+
+def _attach_scan_metrics(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach run-level scan metrics (file coverage, cost, duration, per-phase
+    tokens) to a report payload. Sourced from run state — the F6 catch-all
+    coverage record, the costs table (`db.total_cost` / `db.run_summary`),
+    and the run row's started_at/finished_at — so it is authoritative
+    regardless of what the report agent produced. A metric that isn't
+    knowable yet (report always runs BEFORE `db.finish_run` sets
+    finished_at, so `duration_sec` is normally absent at attach time) is
+    simply omitted rather than emitted as a misleading zero/null. Fail-soft:
+    metrics disclosure must never break report emission."""
+    try:
+        cov = db.get_coverage(run_id) or {}
+        run = db.get_run(run_id)
+        stages = db.run_summary(run_id).get("stages", {})
+        metrics: dict = {
+            "cost_usd": round(db.total_cost(run_id), 4),
+            "tokens_by_phase": [
+                {
+                    "phase": stage,
+                    "input_tokens": agg.get("input_tokens", 0),
+                    "output_tokens": agg.get("output_tokens", 0),
+                    "cost_usd": round(agg.get("usd", 0.0), 4),
+                }
+                for stage, agg in stages.items()
+            ],
+        }
+        if cov.get("source_files") is not None:
+            metrics["files_in_scope"] = cov["source_files"]
+        if cov.get("covered_files") is not None:
+            metrics["files_analyzed"] = cov["covered_files"]
+        if cov.get("source_files"):
+            metrics["coverage_pct"] = round(100 * cov["covered_files"] / cov["source_files"], 1)
+        if run is not None and run["started_at"] is not None and run["finished_at"] is not None:
+            metrics["duration_sec"] = round(run["finished_at"] - run["started_at"], 1)
+        payload["scan_metrics"] = metrics
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] scan_metrics attach failed: %s", run_id, e)
+
+
+def _attach_verification(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach the raw/TP/FP/needs-info/duplicate/precision verification tally
+    to a report payload — computed from EVERY finding this run recorded (not
+    just the reachable/canonical ones that made the final `findings` list),
+    so it discloses the full validate funnel rather than just the survivors.
+    Sourced from run state, authoritative regardless of what the report
+    agent produced. Fail-soft: verification disclosure must never break
+    report emission."""
+    try:
+        fs = db.get_findings(run_id)
+        raw = len(fs)
+        tp = sum(1 for f in fs if f.validation_status == "confirmed")
+        fp = sum(1 for f in fs if f.validation_status == "rejected")
+        nmi = sum(1 for f in fs if f.validation_status == "needs_more_info")
+        dup = sum(1 for f in fs if f.group_id and not f.is_canonical)
+        payload["verification"] = {
+            "raw_findings": raw, "true_positives": tp, "false_positives": fp,
+            "needs_more_info": nmi, "duplicates_collapsed": dup,
+            "precision_pct": round(100 * tp / raw, 1) if raw else 0.0,
+        }
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] verification attach failed: %s", run_id, e)
 
 
 def _group_members_excluding(db: StateDB, run_id: str, group_id: str,
