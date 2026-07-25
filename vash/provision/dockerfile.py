@@ -42,6 +42,14 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "build": "go build ./...",
         "test": "go test ./...",
     },
+    "dotnet": {
+        "base": "mcr.microsoft.com/dotnet/sdk:{ver}",
+        "default_ver": "8.0",
+        "ver_key": "dotnet",
+        "install": "RUN dotnet restore || true",
+        "build": "dotnet build -c Release --no-restore",
+        "test": "dotnet test --no-build",
+    },
     "pip": {
         "base": "python:{ver}-slim",
         "default_ver": "3.11",
@@ -53,7 +61,7 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
 }
 
 # preference order when a repo declares several ecosystems.
-_PRIORITY = ["maven", "gradle", "npm", "go-modules", "pip"]
+_PRIORITY = ["maven", "gradle", "npm", "go-modules", "dotnet", "pip"]
 
 
 @dataclass

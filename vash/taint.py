@@ -277,12 +277,55 @@ GO_SINKS: dict[str, list[re.Pattern]] = {
     )],
 }
 
+CSHARP_SINKS: dict[str, list[re.Pattern]] = {
+    "command_injection": [re.compile(p) for p in (
+        r"Process\.Start\s*\(",
+        r"new\s+ProcessStartInfo\s*\(",
+    )],
+    "code_injection": [re.compile(p) for p in (
+        r"CSharpScript\.(?:Eval|RunAsync|Create)\s*\(",
+        r"CompileAssemblyFromSource\s*\(",
+        r"Assembly\.Load\s*\(",
+    )],
+    "sql_injection": [re.compile(p) for p in (
+        r"new\s+SqlCommand\s*\(",
+        r"new\s+OleDbCommand\s*\(",
+        r"\.ExecuteReader\s*\(",
+        r"\.ExecuteNonQuery\s*\(",
+        r"\.ExecuteScalar\s*\(",
+        r"\.(?:FromSqlRaw|ExecuteSqlRaw)\s*\(",
+    )],
+    "ssrf": [re.compile(p) for p in (
+        r"new\s+HttpClient\s*\(",
+        r"\.(?:GetAsync|PostAsync|GetStringAsync|DownloadString)\s*\(",
+        r"WebRequest\.Create\s*\(",
+        r"new\s+WebClient\s*\(",
+    )],
+    "path_traversal": [re.compile(p) for p in (
+        r"File\.(?:ReadAllText|ReadAllBytes|ReadAllLines|Open|OpenRead)\s*\(",
+        r"new\s+FileStream\s*\(",
+        r"new\s+StreamReader\s*\(",
+    )],
+    "deserialization": [re.compile(p) for p in (
+        r"new\s+BinaryFormatter\s*\(",
+        r"\.Deserialize\s*\(",
+        r"new\s+(?:NetDataContractSerializer|LosFormatter|ObjectStateFormatter)\s*\(",
+        r"TypeNameHandling",
+    )],
+    "xxe": [re.compile(p) for p in (
+        r"new\s+XmlDocument\s*\(",
+        r"new\s+XmlTextReader\s*\(",
+        r"DtdProcessing\s*\.\s*Parse",
+    )],
+}
+
 SINKS_BY_LANG: dict[str, dict[str, list[re.Pattern]]] = {
     "python": PYTHON_SINKS,
     "javascript": JAVASCRIPT_SINKS,
     "typescript": JAVASCRIPT_SINKS,
     "java": JAVA_SINKS,
     "go": GO_SINKS,
+    "csharp": CSHARP_SINKS,
 }
 
 

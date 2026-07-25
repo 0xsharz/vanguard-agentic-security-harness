@@ -44,6 +44,14 @@ def test_templates_go_when_no_recipe(tmp_path):
     assert "FROM golang:1.22" in r.dockerfile
 
 
+def test_templates_dotnet_when_no_recipe(tmp_path):
+    repo = _mk(tmp_path, {"Program.cs": "class P{}\n", "App.csproj": "<Project/>"})
+    r = render_dockerfile(fingerprint(repo), repo)
+    assert r.source == "template"
+    assert "dotnet" in r.dockerfile.lower()
+    assert r.build_cmd and "dotnet build" in r.build_cmd
+
+
 def test_no_known_ecosystem_returns_none(tmp_path):
     repo = _mk(tmp_path, {"README.md": "hi\n"})
     r = render_dockerfile(fingerprint(repo), repo)

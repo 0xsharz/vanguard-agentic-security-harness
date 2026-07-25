@@ -62,6 +62,16 @@ def test_go_sinks():
     assert _matches(GO_SINKS, "sql_injection", 'db.Query(fmt.Sprintf("...%s", x))')
 
 
+def test_csharp_sinks():
+    from vash.taint import CSHARP_SINKS, SINKS_BY_LANG
+    assert SINKS_BY_LANG["csharp"] is CSHARP_SINKS
+    assert _matches(CSHARP_SINKS, "command_injection", "Process.Start(psi)")
+    assert _matches(CSHARP_SINKS, "sql_injection", "new SqlCommand(query, conn)")
+    assert _matches(CSHARP_SINKS, "deserialization",
+                    "var f = new BinaryFormatter(); f.Deserialize(stream);")
+    assert _matches(CSHARP_SINKS, "ssrf", "await httpClient.GetAsync(url)")
+
+
 def test_all_class_keys_are_known():
     known = {"command_injection", "code_injection", "sql_injection", "ssrf",
              "path_traversal", "deserialization", "ssti", "xxe",
