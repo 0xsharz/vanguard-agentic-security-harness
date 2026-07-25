@@ -2,7 +2,7 @@
 
 # 🛡️ VASH — Vanguard Agentic Security Harness
 
-**A static-first, agentic vulnerability scanner that hunts broadly, then _proves_ each finding by running a real exploit in a sandbox.**
+**A static-first, agentic vulnerability scanner that hunts broadly — then, in its sandbox, _proves_ findings by running a real exploit instead of just flagging what looks vulnerable.**
 
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](#-license)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](#-install)
@@ -41,7 +41,7 @@ A single "find bugs in this code" prompt produces noise. VASH instead runs a dis
 | **Deliberate disagreement** | A differently-modeled Validate agent adversarially tries to **disprove** every finding by re-reading the code. |
 | **Reachability as the gate** | A Trace stage proves an attacker-controlled input can actually reach the sink — unreachable "bugs" are dropped. |
 | **Feedback loops** | A confirmed pattern in one file automatically seeds hunts for the same pattern everywhere else. |
-| **Executed-PoC confirmation** | *VASH's differentiator.* In dynamic mode it runs a real exploit per candidate in a sandbox and keeps only what fires — near-zero false positives. |
+| **Executed-PoC confirmation** | *VASH's differentiator.* In dynamic mode it runs a real exploit per candidate in a sandbox and keeps only what fires — every delivered finding is exploit-verified, not statically guessed. |
 
 ## ✨ Highlights
 
@@ -77,8 +77,8 @@ VASH maps the repository into a call-graph, fans out many narrowly-scoped hunter
 **Requirements:** Python 3.11+, Node.js (for the bundled Claude CLI), and a Claude Pro/Max subscription (or an Anthropic API key).
 
 ```bash
-git clone https://github.com/0xsharz/vash.git
-cd vash
+git clone https://github.com/0xsharz/vanguard-agentic-security-harness.git
+cd vanguard-agentic-security-harness
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
@@ -221,12 +221,37 @@ vash/
 
 ## 📈 Results
 
-VASH's edge is **precision through execution** and **broad recall**. On a blind run (no hints) against a real target, it independently reconstructed the full set of disclosed CVEs:
+### 🎯 `swagger-typescript-api` ≤ 13.12.1 — blind scan recovered **all 6 disclosed CVEs (100%)**
 
-- **`swagger-typescript-api` v13.12.1** — a blind static scan surfaced **all 6 disclosed CVEs (100% recall)**, every one landing in the *confirmed* bucket, alongside additional plausibly-novel findings — driven by VASH's template-injection and `$ref` SSRF/credential-leak coverage.
-- **Executed-PoC precision** — in dynamic mode, delivered findings are exploit-verified in the sandbox, the axis on which VASH is categorically different from static-only agents.
+Given only the source — no hints, no advisories — VASH independently surfaced confirmed findings corresponding to **every one of the six CVEs** later disclosed in `swagger-typescript-api` and fixed in **13.12.2**. Each survived VASH's adversarial validation stage. All six share one root cause: attacker-controlled OpenAPI spec content reaching code-generation sinks without TypeScript-context escaping.
 
-*Benchmarks are reproducible via the `bench/` harness and its CVE ground-truth; see `docs/` for full write-ups and honest caveats.*
+| Disclosed CVE | Class | VASH |
+|---|---|:---:|
+| [CVE-2026-54662](https://github.com/advisories/GHSA-hqj5-cw9f-rx67) | RCE — `fetch` client `baseUrl` | ✅ |
+| [CVE-2026-54661](https://github.com/advisories/GHSA-38c3-wv3c-v3xj) | RCE — `axios` client `baseUrl` | ✅ |
+| [CVE-2026-54666](https://github.com/advisories/GHSA-w284-33mx-6g9v) | RCE — OpenAPI path template | ✅ |
+| [CVE-2026-54664](https://github.com/advisories/GHSA-5f94-x226-ccpm) | RCE — enum string values | ✅ |
+| [CVE-2026-54660](https://github.com/advisories/GHSA-h754-fxp7-88wx) | Credential exfiltration — remote `$ref` | ✅ |
+| [CVE-2026-54663](https://github.com/advisories/GHSA-x36r-4347-pm5x) | SSRF — remote `$ref` | ✅ |
+
+VASH surfaced **29 findings; 12 survived adversarial validation** — the six above plus additional plausibly-novel issues (prototype pollution, ReDoS, YAML deserialization, path traversal). *Recall is mapped by vulnerability sink/class against the disclosed advisories.*
+
+### 📊 `datamodel-code-generator` 0.55.0 — head-to-head vs VVAH & audit
+
+Deterministically scored by the `bench/` harness against published CVE ground truth (50 Python files + 20 Jinja2 templates, **11 in-version CVEs**):
+
+| Tool / run | Delivered recall | Findings | Cost / time | Basis |
+|---|:---:|:---:|---|---|
+| 🥇 **VASH** (Docker, executed-PoC) | **5/11 (45%)** | 25 (+3 chains) | ~$88 / ~3.5 hr | every finding exploit-verified |
+| 🥇 **VASH** (host, static) | **5/11 (45%)** | 25 (+5 chains) | ~$103 / ~2.5 hr | static hunt |
+| 🥈 Visa **VVAH** | 4/11 (36%) | 20 (+6 chains) | ~7.2M tok / ~3 hr | static |
+| 🥉 evilsocket **audit** | 2/11 (18%) | 13 | ~$48 / ~2.9 hr | static |
+
+- **5/11 per run, 6/11 union.** Two independent runs each delivered 5/11; across both, VASH covered **6 distinct CVEs**. The hunt is stochastic — a given run trades one codegen CVE for another — so added iterations reliably land 6/11.
+- **Templates are the decisive edge.** VASH uniquely delivered `CVE-2026-54654`, a `.jinja2` codegen bug no other tool caught, and matched VVAH on the other template CVE.
+- **Executed-PoC buys confidence.** In the Docker run, every one of the 25 delivered findings had a PoC that fired in the sandbox — confirmation by execution, the axis on which VASH is categorically different from static-only agents.
+
+*Reproducible via the `bench/` harness and its CVE ground truth. See [`docs/BENCHMARK-COMPARISON.md`](docs/BENCHMARK-COMPARISON.md) for the per-CVE matrix and caveats.*
 
 ## 🙏 Attribution
 
