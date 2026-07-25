@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from vash.lang.hints import EXT_TO_LANG
+
 if TYPE_CHECKING:  # avoid import cost / any cycle — used only for type hints
     from vash.graph.query import GraphQuery
 
@@ -163,6 +165,127 @@ PYTHON_SINKS: dict[str, list[re.Pattern]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Additional AUTHORED sink tables (JS/TS, Java, Go). Same doctrine as
+# PYTHON_SINKS: a few high-signal patterns per class; keys are hunt_task
+# attack_class strings; first matching class per line wins. C/C++ deliberately
+# excluded (needs sanitizer-driven confirmation, a later phase).
+# ---------------------------------------------------------------------------
+JAVASCRIPT_SINKS: dict[str, list[re.Pattern]] = {
+    "command_injection": [re.compile(p) for p in (
+        r"child_process\.(?:exec|execSync|spawn|spawnSync|execFile)\s*\(",
+        r"\.exec(?:Sync)?\s*\(",
+        r"\bshell\s*:\s*true\b",
+    )],
+    "code_injection": [re.compile(p) for p in (
+        r"\beval\s*\(",
+        r"\bnew\s+Function\s*\(",
+        r"vm\.(?:runInNewContext|runInThisContext|compileFunction)\s*\(",
+    )],
+    "ssrf": [re.compile(p) for p in (
+        r"\b(?:axios|got|fetch|request|superagent)\s*(?:\.\w+)?\s*\(",
+        r"https?\.(?:get|request)\s*\(",
+    )],
+    "sql_injection": [re.compile(p) for p in (
+        r"\.query\s*\(",
+        r"\.raw\s*\(",
+        r"sequelize\.query\s*\(",
+    )],
+    "path_traversal": [re.compile(p) for p in (
+        r"fs\.(?:readFile|readFileSync|createReadStream|readdir|readdirSync)\s*\(",
+        r"\.sendFile\s*\(",
+    )],
+    "prototype_pollution": [re.compile(p) for p in (
+        r"__proto__",
+        r"(?:_\.)?merge\s*\(",
+        r"Object\.assign\s*\(",
+    )],
+    "deserialization": [re.compile(p) for p in (
+        r"node-serialize",
+        r"\bunserialize\s*\(",
+    )],
+}
+
+JAVA_SINKS: dict[str, list[re.Pattern]] = {
+    "command_injection": [re.compile(p) for p in (
+        r"Runtime\.getRuntime\(\)\.exec\s*\(",
+        r"new\s+ProcessBuilder\s*\(",
+    )],
+    "code_injection": [re.compile(p) for p in (
+        r"ScriptEngine\w*\.eval\s*\(",
+        r"Ognl\.getValue\s*\(",
+        r"SpelExpressionParser|ExpressionParser\b",
+        r"MVEL\.eval\w*\s*\(",
+    )],
+    "sql_injection": [re.compile(p) for p in (
+        r"\.createStatement\s*\(",
+        r"Statement\b[^;]*\.execute(?:Query|Update)?\s*\(",
+        r"\.createQuery\s*\(",
+        r"\.createNativeQuery\s*\(",
+    )],
+    "ssrf": [re.compile(p) for p in (
+        r"new\s+URL\s*\([^)]*\)\.openConnection\s*\(",
+        r"HttpURLConnection\b",
+        r"RestTemplate\b|WebClient\b|HttpClient\b|OkHttpClient\b",
+        r"Jsoup\.connect\s*\(",
+    )],
+    "deserialization": [re.compile(p) for p in (
+        r"new\s+ObjectInputStream\s*\(",
+        r"\.readObject\s*\(",
+        r"new\s+XMLDecoder\s*\(",
+        r"XStream\b",
+    )],
+    "xxe": [re.compile(p) for p in (
+        r"DocumentBuilderFactory\b",
+        r"SAXParserFactory\b",
+        r"XMLInputFactory\b",
+    )],
+    "path_traversal": [re.compile(p) for p in (
+        r"new\s+File\s*\(",
+        r"new\s+FileInputStream\s*\(",
+        r"Files\.(?:newInputStream|readAllBytes|newBufferedReader|lines)\s*\(",
+    )],
+    "jndi_injection": [re.compile(p) for p in (
+        r"\.lookup\s*\(",
+        r"InitialContext\b",
+        r"JndiTemplate\b",
+    )],
+}
+
+GO_SINKS: dict[str, list[re.Pattern]] = {
+    "command_injection": [re.compile(p) for p in (
+        r"exec\.Command(?:Context)?\s*\(",
+    )],
+    "code_injection": [re.compile(p) for p in (
+        r"plugin\.Open\s*\(",
+    )],
+    "ssrf": [re.compile(p) for p in (
+        r"http\.(?:Get|Post|Head|PostForm|NewRequest)\s*\(",
+        r"\.Do\s*\(\s*req",
+        r"net\.Dial\s*\(",
+    )],
+    "sql_injection": [re.compile(p) for p in (
+        r"\.(?:Query|QueryRow|Exec)(?:Context)?\s*\(",
+    )],
+    "path_traversal": [re.compile(p) for p in (
+        r"os\.(?:Open|OpenFile|ReadFile)\s*\(",
+        r"ioutil\.ReadFile\s*\(",
+        r"http\.ServeFile\s*\(",
+    )],
+    "ssti": [re.compile(p) for p in (
+        r"template\.(?:Must|New|Parse)\s*\(",
+    )],
+}
+
+SINKS_BY_LANG: dict[str, dict[str, list[re.Pattern]]] = {
+    "python": PYTHON_SINKS,
+    "javascript": JAVASCRIPT_SINKS,
+    "typescript": JAVASCRIPT_SINKS,
+    "java": JAVA_SINKS,
+    "go": GO_SINKS,
+}
+
+
 @dataclass(frozen=True)
 class Sink:
     file: str
@@ -194,15 +317,27 @@ def _split_location(location: str | None) -> tuple[str, int]:
     return loc, 0
 
 
-def _python_files(graph: "GraphQuery") -> list[str]:
-    """The graph's known Python source files (by extension or node language)."""
-    files: list[str] = []
-    for f, nids in graph._by_file.items():
-        if f.endswith(".py") or any(
-            graph._doc.nodes[nid].language == "python" for nid in nids
-        ):
-            files.append(f)
-    return sorted(files)
+def _file_language(graph: "GraphQuery", rel_file: str) -> str | None:
+    """Language of a graph file: prefer a graph node's declared language,
+    else fall back to the extension map. Returns None if unknown."""
+    from pathlib import PurePosixPath
+    nids = graph._by_file.get(rel_file, [])
+    for nid in nids:
+        lang = graph._doc.nodes[nid].language
+        if lang in SINKS_BY_LANG:
+            return lang
+    return EXT_TO_LANG.get(PurePosixPath(rel_file).suffix.lower())
+
+
+def _files_by_lang(graph: "GraphQuery") -> list[tuple[str, str]]:
+    """Every graph file paired with a language that HAS a sink table.
+    Files with no table (or unknown language) are dropped."""
+    out: list[tuple[str, str]] = []
+    for f in graph._by_file:
+        lang = _file_language(graph, f)
+        if lang in SINKS_BY_LANG:
+            out.append((f, lang))
+    return sorted(out)
 
 
 def _read_static(repo_path: Path, rel_file: str) -> str | None:
@@ -214,21 +349,19 @@ def _read_static(repo_path: Path, rel_file: str) -> str | None:
 
 
 def find_sinks(repo_path: Path, graph: "GraphQuery") -> list[Sink]:
-    """Scan the graph's Python files for dangerous-API lines, tagging each with
-    its attack class and enclosing symbol.
-
-    Deterministic and static-only: reads each file (utf-8, ``errors="replace"``)
-    and, for every line matching a ``PYTHON_SINKS`` pattern, resolves the
-    enclosing symbol via ``graph.symbol_at_line``. Lines whose symbol does not
-    resolve are skipped. First matching class per line wins.
+    """Scan the graph's files for dangerous-API lines, tagging each with its
+    attack class and enclosing symbol. Language-parametric: each file is
+    matched against the sink table for ITS language (SINKS_BY_LANG). Python
+    behavior is unchanged. Deterministic and static-only.
     """
     sinks: list[Sink] = []
-    for rel_file in _python_files(graph):
+    for rel_file, lang in _files_by_lang(graph):
+        table = SINKS_BY_LANG[lang]
         text = _read_static(repo_path, rel_file)
         if text is None:
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
-            for attack_class, patterns in PYTHON_SINKS.items():
+            for attack_class, patterns in table.items():
                 if any(pat.search(line) for pat in patterns):
                     symbol_id = graph.symbol_at_line(rel_file, lineno)
                     if symbol_id:
