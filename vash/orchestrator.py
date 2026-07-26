@@ -245,6 +245,19 @@ def _provision_environment(ctx: StageContext, db: StateDB, *, build: bool) -> No
                 "[%s] provision: image build failed after %d attempt(s) — "
                 "continuing static-only", ctx.run_id, len(result.attempts),
             )
+        elif result.status == "built" and not ctx.execution_enabled:
+            # An operator who passed --provision may reasonably assume the image
+            # they just built is where the scan runs. It is not: this process is
+            # still outside it, so PoCs would have neither the target's
+            # toolchain nor its dependencies. Say so, with the command that
+            # actually gets executed-PoC confirmation.
+            log.info(
+                "[%s] provision: image %s is built, but THIS scan is running "
+                "outside it (static-only). For executed-PoC confirmation with "
+                "the target's own toolchain: `vash provision --repo %s "
+                "--scan-image` then `./scripts/run-in-docker.sh %s <run-id>`",
+                ctx.run_id, result.image_tag, ctx.repo_path, ctx.repo_path,
+            )
     except Exception as e:  # fail-open — provisioning must never abort a run
         log.warning(
             "[%s] provisioning failed (continuing run): %s", ctx.run_id, e

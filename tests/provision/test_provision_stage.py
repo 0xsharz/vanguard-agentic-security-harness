@@ -97,3 +97,28 @@ def test_unrecognised_repo_still_produces_a_harmless_summary(tmp_path, db):
     _provision_environment(ctx, db, build=False)
     assert ctx.project_env["provisioning_status"] == "skipped"
     assert ctx.project_env["languages"] == []
+
+
+def test_built_image_outside_it_tells_the_operator_how_to_actually_use_it(
+    repo, db, monkeypatch, caplog
+):
+    """`vash run --provision` builds the image but keeps scanning OUTSIDE it, so
+    PoCs still have neither the target's toolchain nor its dependencies. An
+    operator would reasonably assume otherwise."""
+    import logging
+
+    import vash.provision as prov
+    from vash.provision.build import ProvisionResult
+
+    monkeypatch.setattr(prov, "provision_environment",
+                        lambda *a, **k: ProvisionResult(
+                            status="built", source="template",
+                            image_tag="vash-env-target:latest",
+                            fingerprint={"primary_language": "python"}))
+    ctx = _ctx(repo)
+    ctx.execution_enabled = False
+    with caplog.at_level(logging.INFO):
+        _provision_environment(ctx, db, build=True)
+    msg = "\n".join(r.getMessage() for r in caplog.records)
+    assert "running outside it" in msg
+    assert "--scan-image" in msg
