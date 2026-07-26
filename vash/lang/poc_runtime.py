@@ -431,7 +431,12 @@ RUNTIMES: dict[str, Runtime] = {
             '&& dotnet build vashpoc -c Release --nologo'
         ),
         run_cmd="dotnet run --project vashpoc -c Release --no-build --nologo",
-        observer=None,
+        # strace, not dotnet-trace: EventPipe tooling is a global tool absent
+        # from the SDK image and its install needs the network, whereas the scan
+        # image ships strace. VERIFIED in the dotnet SDK image — a
+        # Process.Start sink produced
+        # execve("/bin/sh", ["-c", "echo building report for x; id; ..."]).
+        observer=STRACE_OBSERVER,
         deps_hint=(
             "/target is mounted READ-ONLY: build the scratch project in the "
             "scratch dir (as compile_cmd does) or under /tmp — never inside "
@@ -445,13 +450,20 @@ RUNTIMES: dict[str, Runtime] = {
             "(`find /target -path '*/bin/*' -name '*.dll'`) via an explicit "
             "<Reference><HintPath> in the csproj, or PoC against the target's "
             "own test project with `dotnet test --no-restore --no-build`. "
-            "NO OBSERVER IS SHIPPED FOR C#: the EventPipe tooling "
-            "(dotnet-trace) is a global tool that is NOT in the SDK image and "
-            "installing it needs the network, so VASH would be inventing a "
-            "mechanism that does not run. Prove the behaviour inside the PoC "
-            "instead — assert on the artefact the sink produced (the file it "
-            "wrote, the process it started, the connection it opened) and "
-            "print a distinctive marker line yourself."
+            "REFERENCE THE ASSEMBLY UNDER bin/, NOT obj/: "
+            "`find /tmp/t -name '<Target>.dll' -path '*bin/Release*'`. The "
+            "obj/**/ref and obj/**/refint copies are REFERENCE assemblies and "
+            "throw `BadImageFormatException: Cannot load a reference assembly "
+            "for execution` at run time — a bare `find -name '*.dll'` walks "
+            "straight into this. "
+            "The observer is strace (syscall level), not dotnet-trace: "
+            "EventPipe tooling is a global tool absent from the SDK image and "
+            "installing it needs the network, while the scan image ships "
+            "strace. VERIFIED: a Process.Start sink produced "
+            "execve(\"/bin/sh\", [\"-c\", \"echo ...; id; ...\"]). Also "
+            "assert on the artefact inside the PoC (the file written, the "
+            "process started) and print your own marker line — belt and "
+            "braces, since strace needs CAP_SYS_PTRACE."
         ),
     ),
 }

@@ -164,10 +164,15 @@ def test_honesty_rule_is_stated_in_every_observer() -> None:
         assert "absence of observer evidence is not evidence" in text, lang
 
 
-def test_csharp_is_honest_about_having_no_observer() -> None:
+def test_csharp_uses_the_syscall_observer_since_dotnet_trace_is_unavailable() -> None:
+    """dotnet-trace is a global tool absent from the SDK image and its install
+    needs the network — but the scan image ships strace, and a .NET
+    Process.Start sink IS visible at the syscall boundary (verified in the real
+    dotnet SDK image). Shipping no observer would have been leaving evidence on
+    the table, not honesty."""
     rt = RUNTIMES["csharp"]
-    assert rt.observer is None
-    assert "dotnet-trace" in rt.deps_hint
+    assert rt.observer is not None and rt.observer.name == "strace"
+    assert "dotnet-trace" in rt.deps_hint          # still explains WHY not EventPipe
 
 
 # ---- deps hints reach the TARGET's own dependencies ------------------------
@@ -284,9 +289,15 @@ def test_block_prefers_the_tasks_language_and_falls_back_to_project_env(tmp_path
     assert block["language"] == "go"
 
 
-def test_block_observer_is_none_when_the_runtime_has_none(tmp_path) -> None:
-    block = poc_execution_block(["csharp"], None, tmp_path, materialize=True)
+def test_block_observer_is_none_when_the_runtime_has_none(tmp_path, monkeypatch) -> None:
+    """Every shipped runtime now has an observer, so the None path is exercised
+    with a synthetic runtime — it must still degrade cleanly rather than crash."""
+    from dataclasses import replace
+    bare = replace(RUNTIMES["python"], observer=None)
+    monkeypatch.setitem(RUNTIMES, "python", bare)
+    block = poc_execution_block(["python"], None, tmp_path, materialize=True)
     assert block["observer"] is None
+    assert block["run_cmd"]                       # the recipe still works
 
 
 # ---- the python audit-hook observer, proven end-to-end ---------------------
@@ -513,3 +524,14 @@ def test_typescript_prefers_an_installed_compiler_over_npx(tmp_path) -> None:
     p = subprocess.run(["sh", "-c", cmd], cwd=tmp_path, capture_output=True,
                        text=True, timeout=60)
     assert "LOCAL-TSC poc.ts" in p.stdout, p.stdout + p.stderr
+
+
+def test_csharp_has_a_working_observer_not_none() -> None:
+    """dotnet-trace is unavailable offline, but the scan image ships strace and
+    a .NET Process.Start sink is visible at the syscall boundary — verified in
+    the real dotnet SDK image."""
+    cs = RUNTIMES["csharp"]
+    assert cs.observer is not None
+    assert cs.observer.name == "strace"
+    assert "bin/Release" in cs.deps_hint          # the refint trap is documented
+    assert "BadImageFormatException" in cs.deps_hint
