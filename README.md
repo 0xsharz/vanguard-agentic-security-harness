@@ -165,12 +165,14 @@ Fingerprints the repo (languages, build systems, version pins, existing recipes)
 ```bash
 vash provision --repo PATH                       # print the fingerprint + Dockerfile (no build)
 vash provision --repo PATH --build               # build + verify, repairing failures
+vash provision --repo PATH --scan-image          # ...and layer VASH on top (see below)
 vash provision --repo PATH --build --out rec.json
 ```
 
 | Flag | Description |
 |---|---|
 | `--build` | Actually run `docker build` (+ verify + repair retries). |
+| `--scan-image` | Also build `vash-scan-<repo>` — VASH layered on the target's image, so PoCs run with the target's own toolchain and dependencies. Implies `--build`. |
 | `--tag TEXT` | Image tag (default `vash-env-<repo-name>:latest`). |
 | `--max-attempts INT` | Build attempts including repair retries (default 3). |
 | `--no-verify` | Skip running the ecosystem's build/test command inside the image. |
@@ -180,6 +182,25 @@ vash provision --repo PATH --build --out rec.json
 **Repair ladder** — the build log is matched against a small set of high-signal signatures, each mapped to one textual Dockerfile edit, applied at most once: unavailable base tag → known-good default; missing C toolchain → `build-essential`/`build-base`; missing `git`; `npm ci` without a lockfile → `npm install`; a `COPY` of a path absent from the context; and finally a catch-all that makes the dependency install non-fatal. The repaired Dockerfile is fed to `docker build` on **stdin** — the target tree is never written to.
 
 **Verification is honest**: an image that builds is not necessarily usable, so verify runs a dependency-presence probe *before* the build/test commands. If the target's declared dependencies are not actually installed, the result is reported as `INCOMPLETE` rather than success.
+
+#### The scan image — where executed PoCs actually run
+
+Proving a vulnerability means *running* an exploit against the target. That needs the target's compiler and its libraries — and the generic sandbox has neither: no `javac`, `java`, `mvn`, `go`, `dotnet` or `strace`, and none of the target's packages. A Java PoC there dies at `command not found`; a Python PoC cannot import the code it is attacking.
+
+So `--scan-image` inverts the layering — **VASH is installed into the target's own environment**:
+
+```
+vash-env-<target>      the target's environment (Phase: provisioning)
+        │
+        └── + VASH + node + the claude CLI   →   vash-scan-<target>
+```
+
+```bash
+vash provision --repo ./target --scan-image        # build it once
+./scripts/run-in-docker.sh ./target my-run         # picks it up automatically
+```
+
+`run-in-docker.sh` uses `vash-scan-<target>` when it exists and tells you what is lost when it does not, rather than silently degrading. Two details that are load-bearing: VASH lives in its own virtualenv that is deliberately **not** on `PATH` (otherwise `python3` would resolve to VASH's interpreter and every Python PoC would lose sight of the target), and bases without a usable Python — Maven, Go — get a private 3.11 via `uv`.
 
 ### `vash status` / `vash auth-check`
 
