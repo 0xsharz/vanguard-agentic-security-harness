@@ -247,10 +247,17 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
               type=click.Choice(["none", "bridge"]),
               help="Container network for the verify step (default: none — "
                    "verification runs offline).")
+@click.option("--scan-image", is_flag=True, default=False,
+              help="Also build the SCAN image (vash-scan-<repo>): VASH layered "
+                   "on top of the target's provisioned image, so PoCs run with "
+                   "the target's own toolchain and dependencies. Without it the "
+                   "scan runs in the generic sandbox, where a Java/Go PoC has "
+                   "no compiler and a Python PoC cannot import the target. "
+                   "Implies --build.")
 @click.option("--out", "out_path", default=None, type=click.Path(),
               help="Write the full provisioning record as JSON here.")
 def provision_cmd(repo: str, build: bool, tag: str | None, max_attempts: int,
-                  no_verify: bool, verify_network: str,
+                  no_verify: bool, verify_network: str, scan_image: bool,
                   out_path: str | None) -> None:
     """Fingerprint a repo and render (optionally build) its environment image.
 
@@ -266,8 +273,11 @@ def provision_cmd(repo: str, build: bool, tag: str | None, max_attempts: int,
     dropped privileges.
     """
     from vash.provision import provision_environment
+    from vash.provision.scan_image import build_scan_image
 
     repo_path = Path(repo).resolve()
+    # --scan-image is only meaningful once the target image exists.
+    build = build or scan_image
     result = provision_environment(
         repo_path, build=build, tag=tag, max_attempts=max_attempts,
         verify=not no_verify, verify_network=verify_network,
@@ -311,11 +321,33 @@ def provision_cmd(repo: str, build: bool, tag: str | None, max_attempts: int,
     console.print(f"\n[{color}]status: {result.status}[/{color}]"
                   + (f" — image {result.image_tag}" if result.status == "built" else ""))
 
+    scan = None
+    if scan_image:
+        if result.status != "built":
+            console.print("[yellow]--scan-image skipped:[/yellow] the target "
+                          "image was not built, so there is nothing to layer on")
+        else:
+            console.print("\nbuilding scan image (VASH + the target's environment)...")
+            scan = build_scan_image(repo_path, base_image=result.image_tag)
+            for note in scan.notes:
+                console.print("[yellow]note:[/yellow] " + escape(note))
+            if scan.status == "built":
+                console.print(f"[green]scan image: {scan.tag}[/green]")
+                console.print("run the scan with it: "
+                              f"docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN "
+                              f"-v <target>:/target:ro {scan.tag} "
+                              "run --repo /target --dynamic-validation")
+            else:
+                console.print(f"[red]scan image {scan.status}[/red]")
+
     if out_path:
-        Path(out_path).write_text(json.dumps(result.to_dict(), indent=2))
+        payload = result.to_dict()
+        if scan is not None:
+            payload["scan_image"] = scan.to_dict()
+        Path(out_path).write_text(json.dumps(payload, indent=2))
         console.print(f"record: {out_path}")
 
-    if result.status == "failed":
+    if result.status == "failed" or (scan is not None and scan.status == "failed"):
         sys.exit(1)
 
 
