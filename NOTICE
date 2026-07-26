@@ -30,8 +30,9 @@ Visa VVAH (visa-vulnerability-agentic-harness)  —  Apache License 2.0
     (vash/lang/hints.py), the repo-kind OWASP/CWE baselines (vash/baselines.py),
     and the secret/PII/PAN redaction module (vash/redact.py).
     Adapted (not verbatim): deterministic entry→sink taint-path chunking, gated
-    specialist passes, catch-all coverage eligibility, and exploit-chain
-    construction.
+    specialist passes, catch-all coverage eligibility, exploit-chain
+    construction, the remediation policy hard-gates, and the remediation diff
+    path-safety guard (rejecting absolute / `..` / drive / UNC targets).
     License: licenses/VVAH-Apache-2.0.txt
 
 Changes were made to all reused portions to adapt them to VASH's Python,

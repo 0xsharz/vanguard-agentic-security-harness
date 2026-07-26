@@ -39,7 +39,7 @@ import json
 import re
 import subprocess
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from vash import sandbox
 from vash.redact import redact, redact_json
@@ -332,6 +332,34 @@ def _normalize_hunk_counts(diff: str) -> tuple[str, int]:
         return diff, 0
 
 
+# A generated diff names the files it edits. Those names are model output, so
+# they are untrusted input: an absolute path, a `..` escape or a Windows
+# drive/UNC prefix would direct the edit OUTSIDE the repository under review.
+# `git apply` refuses such paths by default, but `patch -p1` and
+# `git apply --unsafe-paths` do not — and VASH hands the operator a file either
+# way. The diff is therefore rejected before it is written.
+# (Control adapted from Visa VVAH's remediation diff path-safety guard.)
+_DIFF_TARGET = re.compile(r"^(?:---|\+\+\+) (?:[ab]/)?([^\t\n]+)")
+_UNSAFE_PREFIX = re.compile(r"^(?:[A-Za-z]:|\\\\|//)")
+
+
+def _unsafe_diff_paths(diff: str) -> list[str]:
+    """Every path in `diff` that would edit outside the repository."""
+    bad: list[str] = []
+    for line in diff.splitlines():
+        m = _DIFF_TARGET.match(line)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        if raw in ("/dev/null", ""):
+            continue
+        if raw.startswith("/") or _UNSAFE_PREFIX.match(raw):
+            bad.append(raw)                       # absolute, drive or UNC
+        elif any(part == ".." for part in PurePosixPath(raw).parts):
+            bad.append(raw)                       # traversal
+    return sorted(set(bad))
+
+
 def _check_patch_applies(diff: str, repo_path: Path) -> tuple[bool | None, str]:
     """Does this diff actually apply to the target tree?
 
@@ -367,6 +395,17 @@ def _write_patch_and_test(record: dict, patches_dir: Path, tests_dir: Path) -> N
     fid = record["finding_id"]
     diff = (record.get("patch_diff") or "")
     if diff.strip():
+        unsafe = _unsafe_diff_paths(diff)
+        if unsafe:
+            # Do not write a diff that edits outside the repo — downgrade it to
+            # guidance so the operator still gets the analysis, without a file
+            # they might apply with a tool that does not refuse the path.
+            log.error("[remediate] %s: diff targets paths outside the repo %s — "
+                      "withheld, downgraded to guidance", fid, unsafe)
+            record["status"] = "guidance_only"
+            record["patch_withheld"] = f"diff targeted unsafe paths: {', '.join(unsafe)}"
+            record["patch_diff"] = ""
+            return
         diff, corrected = _normalize_hunk_counts(diff)
         if corrected:
             record["patch_diff"] = diff

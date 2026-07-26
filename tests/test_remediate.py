@@ -550,3 +550,53 @@ def test_apply_check_reports_a_missing_target_file(tmp_path) -> None:
         "--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,1 @@\n-x\n+y\n", tmp_path)
     assert applies is False
     assert "a.py" in detail
+
+
+# --- a generated diff must not edit outside the repository -----------------
+
+def test_unsafe_diff_paths_are_detected() -> None:
+    """File names in a diff are model output, i.e. untrusted. An absolute path,
+    a `..` escape or a drive/UNC prefix would direct the edit OUTSIDE the repo
+    under review. `git apply` refuses these, but `patch -p1` and
+    `git apply --unsafe-paths` do not — and VASH hands over the file either way.
+    (Control adapted from Visa VVAH's diff path-safety guard.)"""
+    from vash.stages.remediate import _unsafe_diff_paths
+    assert _unsafe_diff_paths("--- a/app/x.py\n+++ b/app/x.py\n") == []
+    assert _unsafe_diff_paths("--- /dev/null\n+++ b/app/new.py\n") == []   # legal: new file
+    assert _unsafe_diff_paths("--- a/x\n+++ b//etc/passwd\n") == ["/etc/passwd"]
+    assert _unsafe_diff_paths(
+        "--- a/../../etc/shadow\n+++ b/../../etc/shadow\n") == ["../../etc/shadow"]
+    assert _unsafe_diff_paths("--- a/x\n+++ b/C:/Windows/hosts\n") == ["C:/Windows/hosts"]
+
+
+def test_a_diff_escaping_the_repo_is_withheld_not_written(tmp_path) -> None:
+    """The operator still gets the analysis, but not a file they might apply
+    with a tool that does not refuse the path."""
+    from vash.stages.remediate import _write_patch_and_test
+    patches, tests = tmp_path / "patches", tmp_path / "tests"
+    patches.mkdir(); tests.mkdir()
+    record = {
+        "finding_id": "f_evil",
+        "status": "patched",
+        "patch_diff": "--- a/../../../../tmp/ESCAPED.txt\n"
+                      "+++ b/../../../../tmp/ESCAPED.txt\n@@ -0,0 +1 @@\n+pwned\n",
+        "security_test": "def test_x(): pass\n",
+    }
+    _write_patch_and_test(record, patches, tests)
+    assert list(patches.iterdir()) == []            # nothing written
+    assert record["status"] == "guidance_only"
+    assert "unsafe paths" in record["patch_withheld"]
+
+
+def test_a_safe_diff_is_still_written(tmp_path) -> None:
+    from vash.stages.remediate import _write_patch_and_test
+    patches, tests = tmp_path / "patches", tmp_path / "tests"
+    patches.mkdir(); tests.mkdir()
+    record = {
+        "finding_id": "f_ok", "status": "patched",
+        "patch_diff": "--- a/app/x.py\n+++ b/app/x.py\n@@ -1,1 +1,1 @@\n-a\n+b\n",
+        "security_test": "def test_x(): pass\n",
+    }
+    _write_patch_and_test(record, patches, tests)
+    assert (patches / "f_ok.diff").is_file()
+    assert record["status"] == "patched"
