@@ -71,3 +71,6 @@ notes.db
 *-state.db
 .dmcg-*
 .tables
+
+# CodeGraph index (local, regenerable via `codegraph init`)
+.codegraph/

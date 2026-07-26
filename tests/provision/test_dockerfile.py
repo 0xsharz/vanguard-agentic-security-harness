@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 from vash.provision.fingerprint import fingerprint
 from vash.provision.dockerfile import render_dockerfile, RenderedRecipe
 
@@ -76,3 +80,45 @@ def test_primary_language_wins_over_vendored_manifest(tmp_path):
     assert fp.primary_language == "python"
     r = render_dockerfile(fp, repo)
     assert "python:" in r.dockerfile        # NOT node
+
+
+# --- dependency-presence probe (Phase 2 verify) -----------------------------
+
+def test_npm_deps_probe_is_conditional_on_declared_dependencies():
+    """A package.json with no dependencies legitimately has no node_modules —
+    the probe must not report MISSING for it (observed against a real
+    dependency-free target, which the first version of this probe failed)."""
+    from vash.provision.dockerfile import ECOSYSTEM_TEMPLATES
+    probe = ECOSYSTEM_TEMPLATES["npm"]["deps"]
+    assert "dependencies" in probe and "devDependencies" in probe
+    assert "node_modules" in probe
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node on PATH")
+@pytest.mark.parametrize("pkg,expect_ok", [
+    ('{"name":"x"}', True),                                  # no deps -> OK
+    ('{"name":"x","dependencies":{}}', True),                # empty deps -> OK
+    ('{"name":"x","dependencies":{"left-pad":"1.0.0"}}', False),   # deps, no node_modules -> MISSING
+])
+def test_npm_deps_probe_behaviour(tmp_path, pkg, expect_ok):
+    """Run the probe shell for real (no docker, no network) to prove the
+    conditional actually behaves as intended."""
+    from vash.provision.dockerfile import ECOSYSTEM_TEMPLATES
+    (tmp_path / "package.json").write_text(pkg)
+    p = subprocess.run(["sh", "-c", ECOSYSTEM_TEMPLATES["npm"]["deps"]],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert (p.returncode == 0) is expect_ok, p.stdout + p.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node on PATH")
+def test_npm_deps_probe_passes_when_node_modules_exists(tmp_path):
+    (tmp_path / "package.json").write_text('{"name":"x","dependencies":{"left-pad":"1.0.0"}}')
+    (tmp_path / "node_modules").mkdir()
+    p = subprocess.run(["sh", "-c", ECOSYSTEM_TEMPLATES_DEPS()],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def ECOSYSTEM_TEMPLATES_DEPS():
+    from vash.provision.dockerfile import ECOSYSTEM_TEMPLATES
+    return ECOSYSTEM_TEMPLATES["npm"]["deps"]

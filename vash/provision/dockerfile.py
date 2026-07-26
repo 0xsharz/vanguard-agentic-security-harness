@@ -25,6 +25,14 @@ _PIP_DEPS_PROBE = (
 )
 _NPM_DEPS_PROBE = (
     "[ -f package.json ] || exit 0; "
+    # A package.json that declares NO dependencies legitimately has no
+    # node_modules — demanding one there is a false alarm (observed against a
+    # dependency-free target). Only require the directory when the manifest
+    # actually asks for something. If `node` is somehow absent, fall through to
+    # exit 0 rather than inventing a failure.
+    "node -e \"const p=require('./package.json');"
+    "process.exit(Object.keys({...(p.dependencies||{}),...(p.devDependencies||{})}).length?0:1)\" "
+    "2>/dev/null || exit 0; "
     "[ -d node_modules ] || { echo 'MISSING DEPENDENCIES: node_modules absent'; exit 1; }"
 )
 
