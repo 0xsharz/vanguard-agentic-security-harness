@@ -131,6 +131,7 @@ vash run --repo PATH [options]
 | `--target-url URL` | Optional live deployment the agents may hit to confirm findings. |
 | `--target-creds K=V` | Credentials for the live target (repeatable). |
 | `--scope-notes FILE` | Target-specific scope rules / exclusions, passed to every stage. |
+| `--provision` | Build the target's environment image before the scan (`docker build` + verify + deterministic repair). Requires Docker. Runs the **target's own** build instructions — inside a container, never on the host. Without it the pipeline still fingerprints the repo and renders a Dockerfile, but builds nothing. |
 | `--config PATH` | Override `config/stages.yaml` (models, concurrency, iterations). |
 | `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing. |
 
@@ -156,6 +157,29 @@ Re-verifies a prior run's confirmed findings with a fresh, adversarial pass.
 ```bash
 vash validate --run-id ID [--repo PATH] [--model NAME] [--min-confidence FLOAT]
 ```
+
+### `vash provision` — build the target's environment *(decoupled, opt-in)*
+
+Fingerprints the repo (languages, build systems, version pins, existing recipes) and renders the Dockerfile VASH would build. Offline and free by default — no LLM, no network, no cost. With `--build` it runs `docker build`, retries through a **deterministic repair ladder** when the build fails, then verifies the image from the inside.
+
+```bash
+vash provision --repo PATH                       # print the fingerprint + Dockerfile (no build)
+vash provision --repo PATH --build               # build + verify, repairing failures
+vash provision --repo PATH --build --out rec.json
+```
+
+| Flag | Description |
+|---|---|
+| `--build` | Actually run `docker build` (+ verify + repair retries). |
+| `--tag TEXT` | Image tag (default `vash-env-<repo-name>:latest`). |
+| `--max-attempts INT` | Build attempts including repair retries (default 3). |
+| `--no-verify` | Skip running the ecosystem's build/test command inside the image. |
+| `--verify-network` | Container network for verification: `none` (default) or `bridge`. |
+| `--out PATH` | Write the full provisioning record (attempts, repairs, logs) as JSON. |
+
+**Repair ladder** — the build log is matched against a small set of high-signal signatures, each mapped to one textual Dockerfile edit, applied at most once: unavailable base tag → known-good default; missing C toolchain → `build-essential`/`build-base`; missing `git`; `npm ci` without a lockfile → `npm install`; a `COPY` of a path absent from the context; and finally a catch-all that makes the dependency install non-fatal. The repaired Dockerfile is fed to `docker build` on **stdin** — the target tree is never written to.
+
+**Verification is honest**: an image that builds is not necessarily usable, so verify runs a dependency-presence probe *before* the build/test commands. If the target's declared dependencies are not actually installed, the result is reported as `INCOMPLETE` rather than success.
 
 ### `vash status` / `vash auth-check`
 
@@ -190,6 +214,8 @@ execution_enabled = --dynamic-validation  AND  (inside a sandbox  OR  --dangerou
 | **Dynamic** | `vash run --repo … --dynamic-validation` *(in Docker/`VASH_SANDBOX=1`)* | Writes & runs a real PoC per candidate in the sandbox; keeps only what fires. |
 | **Refused** | `--dynamic-validation` on a bare host | **Fails fast** with a clear remedy — never silently executes on the host. |
 
+**Provisioning** (`--provision` / `vash provision --build`) is the one other path that runs target-authored instructions — a target's build is its own code (`npm ci` runs postinstall scripts, `mvn package` runs plugins). It is opt-in, and every command it issues executes **inside a container, never on the host**; the verify step additionally runs with `--network none`, `no-new-privileges` and cpu/memory/pid caps. Fingerprinting and Dockerfile rendering (the default, flagless path) are pure text analysis and execute nothing.
+
 ## 🗂️ Project structure
 
 ```
@@ -201,6 +227,7 @@ vash/
 │   ├── sandbox.py           # execution sandbox gate (static-first invariant)
 │   ├── progress.py          # RunReporter — rich, fail-soft live logging
 │   ├── taint.py             # deterministic entry→sink taint analysis
+│   ├── provision/           # fingerprint → render Dockerfile → build/verify/repair
 │   ├── graph_context.py     # call-graph queries feeding the hunters
 │   ├── state.py             # SQLite run state (findings, tasks, cost)
 │   ├── stages/              # recon, hunt, validate, gapfill, dedupe,
@@ -211,7 +238,7 @@ vash/
 ├── config/stages.yaml       # per-stage model, concurrency, iterations
 ├── bench/                   # CVE-recall benchmark harness + ground truth
 ├── scripts/run-in-docker.sh # sandboxed (executed-PoC) runner
-├── tests/                   # 660 offline tests
+├── tests/                   # 717 offline tests
 ├── Dockerfile               # the isolation sandbox image
 ├── NOTICE / THIRD_PARTY_LICENSES.md   # attribution
 └── docs/                    # design specs & benchmark write-ups

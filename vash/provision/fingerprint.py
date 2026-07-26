@@ -50,17 +50,33 @@ class ProjectFingerprint:
 
 
 def _iter_files(repo_path: Path):
-    for p in repo_path.rglob("*"):
-        if not p.is_file():
+    """Every file under the repo, minus build/VCS noise.
+
+    Permission-guarded per entry (the macOS Claude Code sandbox denies reads of
+    `.envrc`, submodule `.git` internals, ...): a single unreadable entry skips
+    cleanly instead of aborting the whole fingerprint. This runs on the pipeline's
+    critical path (orchestrator Stage 0), so it must not raise. Exclusion is
+    checked on the path RELATIVE to the repo, so a repo that merely lives under
+    a directory named e.g. `build/` is not silently emptied."""
+    try:
+        candidates = repo_path.rglob("*")
+    except OSError:
+        return
+    for p in candidates:
+        try:
+            if not p.is_file():
+                continue
+            rel_parts = p.relative_to(repo_path).parts
+        except (OSError, ValueError):
             continue
-        if any(part in _SKIP_DIRS for part in p.relative_to(repo_path).parts):
+        if any(part in _SKIP_DIRS for part in rel_parts):
             continue
         yield p
 
 
-def _detect_languages(repo_path: Path) -> tuple[list[str], str | None]:
+def _detect_languages(files: list[Path]) -> tuple[list[str], str | None]:
     counts: Counter[str] = Counter()
-    for p in _iter_files(repo_path):
+    for p in files:
         lang = EXT_TO_LANG.get(p.suffix.lower())
         if lang and lang != "web-template":
             counts[lang] += 1
@@ -71,8 +87,8 @@ def _detect_languages(repo_path: Path) -> tuple[list[str], str | None]:
     return langs, langs[0]
 
 
-def _detect_build_systems(repo_path: Path) -> list[str]:
-    present = set(p.name for p in _iter_files(repo_path))
+def _detect_build_systems(files: list[Path]) -> list[str]:
+    present = set(p.name for p in files)
     found: list[str] = []
     for bs, markers in BUILD_SYSTEM_MARKERS.items():
         for m in markers:
@@ -132,10 +148,13 @@ def _detect_version_pins(repo_path: Path) -> dict[str, str]:
 
 def fingerprint(repo_path: Path) -> ProjectFingerprint:
     repo_path = Path(repo_path)
-    languages, primary = _detect_languages(repo_path)
+    # ONE walk shared by both detectors — this is on the pipeline's critical
+    # path (Stage 0), and a large target should not be traversed twice.
+    files = list(_iter_files(repo_path))
+    languages, primary = _detect_languages(files)
     return ProjectFingerprint(
         languages=languages,
-        build_systems=_detect_build_systems(repo_path),
+        build_systems=_detect_build_systems(files),
         version_pins=_detect_version_pins(repo_path),
         existing_recipes=_detect_recipes(repo_path),
         primary_language=primary,

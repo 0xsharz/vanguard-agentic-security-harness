@@ -2,11 +2,14 @@
 
 Production Python vulnerability scanner. **Forked from evilsocket/audit** (MIT, 8-stage LLM pipeline) and
 grafted with the best mechanisms from **Capital One VulnHunter** and **Visa VVAH** (both Apache-2.0).
-Repo: `/Users/snatarajan14/vash` (was `~/audit`; renamed 2026-07-24). Branch: `evolve/vulnhunter-imports`.
-Tests: ~606 passing (offline, no network). Package + CLI: `vash`.
+Repo: `~/my_backup/vash` (was `~/audit` → `~/vash`; moved under `my_backup/` in the 2026-07-26 laptop
+migration). Branch: `evolve/vulnhunter-imports`. Tests: 717 passing, 1 skipped (offline, no network).
+Package + CLI: `vash`. Python 3.11 is provided by `uv` (`~/.local/bin/uv`); rebuild the venv with
+`uv venv --python 3.11 && uv pip install -e '.[dev]'`.
 
 ## Donor policy (HARD RULE)
-Reuse ONLY from **audit, VulnHunter (`~/VulnHunter`), VVAH (`~/visa-harness`)**. **ai-proofscan is FORBIDDEN
+Reuse ONLY from **audit (`~/my_backup/audit-orig`), VulnHunter (`~/my_backup/VulnHunter`), VVAH
+(`~/my_backup/visa-harness`)**. **ai-proofscan is FORBIDDEN
 as a donor** (user directive 2026-07-24) — never port its code/prompts. If a plan step points at ai-proofscan,
 re-source from the 3 allowed tools or author fresh. (F5 was rebuilt off VulnHunter after an ai-proofscan slip.)
 Attribution: `NOTICE` + `THIRD_PARTY_LICENSES.md` (Task 4.8). Benchmark corpus in `bench/ground_truth/` is
@@ -20,7 +23,24 @@ differentiator — VVAH and audit are static-only and cannot do it.** Safety: `v
 unless `sandbox.is_sandboxed()`** (container/`VASH_SANDBOX=1`), so on a bare host VASH is fully static and
 never executes untrusted code; inside Docker it runs PoCs. Pipeline (9 stages): recon → hunt → validate →
 gapfill → dedupe → trace → feedback → chain → report, plus a deterministic **graphify call-graph** feeding
-V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` / `vash validate`.
+V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` / `vash validate` / `vash provision`.
+
+## Multi-language provisioning (plan `docs/superpowers/plans/2026-07-26-vash-multilang-provisioning-phase1.md`)
+- **Phase 1 DONE** (`fac07df..b497d02`): `vash/provision/fingerprint.py` (languages/build-systems/version-pins/
+  existing recipes) + `dockerfile.py` (per-ecosystem template, text only) + `SINKS_BY_LANG` in `taint.py`
+  (JS/TS, Java, Go, C#; Python byte-for-byte unchanged).
+- **Phase 2 DONE**: `provision/build.py` (`docker build` fed on stdin + verify + retry) and
+  `provision/repair.py` (deterministic repair ladder, 6 rungs, each fires at most once). Wired as
+  **orchestrator Stage 0** (`_provision_environment`, fail-open, pre-recon): always fingerprints+renders
+  (free, offline, no Docker); builds ONLY with `vash run --provision`. Environment facts ride to every agent
+  via `ctx.project_env` → `extras()["project_environment"]`; full record at
+  `results/<run>/provision/provision.json`. Isolation: the target's own build instructions run INSIDE a
+  container, never on the host; verify uses `--network none` + `no-new-privileges` + cpu/mem/pid caps.
+  Verify probes **dependency presence** — an image that builds but lacks the target's deps is reported
+  INCOMPLETE, not success (this caught a real Phase-1 template bug: `pip install -e . || pip install -r
+  requirements.txt` short-circuited and left deps uninstalled).
+- **Phase 3 (open)**: per-language PoC observers (JFR/async_hooks/strace) + the `vash poc --run-id` command
+  (spec: `docs/superpowers/specs/2026-07-26-vash-poc-command-design.md`). C/C++ deferred entirely per user.
 
 ## How to run (Docker, the real way)
 Auth into the container needs a container-passable token (macOS Keychain can't cross into Linux):

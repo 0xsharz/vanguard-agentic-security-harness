@@ -35,6 +35,12 @@ class StageContext:
     # fail-soft by construction (see vash.progress.RunReporter) — excluded from
     # repr/equality since it wraps a live Console, not run identity.
     reporter: "RunReporter | None" = field(default=None, repr=False, compare=False)
+    # Phase 2 provisioning: the compact environment facts (languages, build
+    # systems, version pins, image/build commands) produced by the pre-recon
+    # provisioning step. Merged into every agent's user_input via extras() so
+    # a hunter on a Java/Go/C# target knows what it is looking at. None until
+    # that step runs — it is fail-open, so None must stay harmless.
+    project_env: dict | None = None
     # Path to the cached code graph (audit.graph). Set by the taint step (V8)
     # once built so later graph consumers (V6/F2) can reuse the same cache.
     graph_cache_path: Path | None = None
@@ -74,6 +80,8 @@ class StageContext:
             out["live_target"] = self.live_target
         if self.scope_notes:
             out["scope_notes"] = self.scope_notes
+        if self.project_env:
+            out["project_environment"] = self.project_env
         return out
 
     def prompt(self, name: str) -> Path:

@@ -195,6 +195,63 @@ async def _reconcile_inputs(ctx: StageContext, db: StateDB) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stage 0: environment provisioning (Phase 2).
+#
+# Runs BEFORE Recon, because everything downstream benefits from knowing what
+# the target actually is: its languages, build systems and version pins ride
+# along in every agent's user_input (ctx.project_env -> extras()), which is
+# what makes a Java/Go/C# target legible to a hunter whose default assumption
+# is Python.
+#
+# Two modes:
+#   * default (build=False) — pure Phase-1 text work: fingerprint + render a
+#     Dockerfile. Zero Docker, zero cost, nothing from the target executes.
+#   * opt-in (`vash run --provision`) — additionally build/verify/repair that
+#     image. The target's OWN build instructions run at that point, so they run
+#     inside a container and never on the host (see vash/provision/build.py).
+#
+# Fail-open like every other synthesis step: a provisioning failure degrades
+# the run to static-only, it never aborts it.
+# ---------------------------------------------------------------------------
+
+def _provision_environment(ctx: StageContext, db: StateDB, *, build: bool) -> None:
+    """Fingerprint the target, render (and optionally build) its environment.
+
+    **Fail-open**: every error is logged and swallowed. Persists
+    `results/<run-id>/provision/provision.json` (the full record: fingerprint,
+    Dockerfile, every build attempt + repair, verify logs) and sets
+    `ctx.project_env` to the compact agent-facing summary.
+    """
+    try:
+        from vash.provision import provision_environment
+
+        result = provision_environment(ctx.repo_path, build=build)
+        ctx.project_env = result.agent_summary()
+
+        out = ctx.results_dir("provision") / "provision.json"
+        out.write_text(json.dumps(result.to_dict(), indent=2))
+        db.add_artifact(ctx.run_id, "provision", None, "provision", str(out))
+
+        log.info(
+            "[%s] provision: status=%s source=%s primary=%s build_systems=%s",
+            ctx.run_id, result.status, result.source,
+            result.fingerprint.get("primary_language"),
+            ",".join(result.fingerprint.get("build_systems", [])) or "-",
+        )
+        for note in result.notes:
+            log.info("[%s] provision: %s", ctx.run_id, note)
+        if result.status == "failed":
+            log.warning(
+                "[%s] provision: image build failed after %d attempt(s) — "
+                "continuing static-only", ctx.run_id, len(result.attempts),
+            )
+    except Exception as e:  # fail-open — provisioning must never abort a run
+        log.warning(
+            "[%s] provisioning failed (continuing run): %s", ctx.run_id, e
+        )
+
+
+# ---------------------------------------------------------------------------
 # Deterministic entry→sink taint chunking (feature V8).
 #
 # After Recon has enumerated every attacker-controllable input (F1), build the
@@ -453,6 +510,7 @@ async def run_pipeline(
     scope_notes: str | None = None,
     dynamic_validation: bool = False,
     allow_no_sandbox: bool = False,
+    provision: bool = False,
 ) -> Path:
     ctx = StageContext(
         run_id=run_id,
@@ -517,6 +575,12 @@ async def run_pipeline(
             ctx.reporter.stage_start(stage_name, model=ctx.stage(stage_name).model)
 
     try:
+        # ---- Stage 0: provisioning (Phase 2) ----
+        # Deterministic and free by default (fingerprint + render only); builds
+        # the image when --provision is passed. Fail-open (see helper). Runs
+        # first so ctx.project_env reaches Recon and everything after it.
+        _provision_environment(ctx, db, build=provision)
+
         # ---- Stage 1: Recon ----
         _budget_check("recon")
         _stage_start("recon")

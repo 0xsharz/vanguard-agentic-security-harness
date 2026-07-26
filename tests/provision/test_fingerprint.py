@@ -38,3 +38,19 @@ def test_empty_repo_is_safe(tmp_path):
     assert fp.languages == []
     assert fp.primary_language is None
     assert fp.build_systems == []
+
+
+def test_repo_under_a_directory_named_build_is_not_emptied(tmp_path):
+    """Skip-dirs are matched on the path RELATIVE to the repo — a repo that
+    merely lives under `.../build/` must still fingerprint."""
+    repo = _mk(tmp_path / "build" / "proj", {"a.py": "1\n", "requirements.txt": "x\n"})
+    fp = fingerprint(repo)
+    assert fp.primary_language == "python"
+    assert "pip" in fp.build_systems
+
+
+def test_broken_symlink_does_not_abort_the_walk(tmp_path):
+    repo = _mk(tmp_path, {"a.py": "1\n"})
+    (repo / "dangling").symlink_to(repo / "nope-does-not-exist")
+    fp = fingerprint(repo)
+    assert fp.primary_language == "python"

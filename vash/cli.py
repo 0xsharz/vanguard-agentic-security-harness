@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 
 from vash.auth import AuthError, configure_auth
@@ -133,6 +134,13 @@ def auth_check(allow_api_key: bool) -> None:
 @click.option("--dangerously-no-sandbox", "no_sandbox", is_flag=True, default=False,
               help="DEV ONLY: allow --dynamic-validation to run PoCs without an active "
                    "sandbox, with a loud warning. Unsafe on untrusted targets.")
+@click.option("--provision", is_flag=True, default=False,
+              help="Build the target's environment image (docker build + verify "
+                   "+ deterministic repair) before the scan. Requires Docker. "
+                   "Runs the TARGET's own build instructions — inside a "
+                   "container, never on the host. Without this flag the "
+                   "pipeline still fingerprints the repo and renders a "
+                   "Dockerfile, but builds nothing.")
 @click.option("--config", "config_path", default=None, type=click.Path(),
               help="Override config/stages.yaml.")
 @click.option("--allow-api-key", is_flag=True, default=False,
@@ -142,7 +150,7 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
         max_concurrency: int | None, max_recon_tasks: int | None,
         target_url: str | None, target_creds: tuple[str, ...],
         scope_notes_path: str | None,
-        dynamic_validation: bool, no_sandbox: bool,
+        dynamic_validation: bool, no_sandbox: bool, provision: bool,
         config_path: str | None,
         allow_api_key: bool) -> None:
     """Run the full 8-stage pipeline against a target repo."""
@@ -157,6 +165,10 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
     if max_concurrency is not None:
         config.cap_concurrency(max_concurrency)
         console.print(f"[cyan]capped concurrency to {max_concurrency} across all stages[/cyan]")
+
+    if provision:
+        console.print("[cyan]provisioning enabled:[/cyan] the target's own build "
+                      "instructions will run inside a container (never on this host)")
 
     # Live-target plumbing — agents will receive {"url": ..., "credentials": {...}}
     # in their user_input when set.
@@ -196,6 +208,7 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
             scope_notes=scope_notes,
             dynamic_validation=dynamic_validation,
             allow_no_sandbox=no_sandbox,
+            provision=provision,
         ))
         console.print(f"[green]done[/green] run_id={run_id} report={report}")
         # Note: the per-stage run summary is already printed by
@@ -213,6 +226,97 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
         raise
     finally:
         db.close()
+
+
+@main.command("provision")
+@click.option("--repo", "repo", required=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="Path to the target source-code repo.")
+@click.option("--build", is_flag=True, default=False,
+              help="Actually run `docker build` (plus verify + deterministic "
+                   "repair retries). Without it this only fingerprints the "
+                   "repo and prints the Dockerfile it WOULD build.")
+@click.option("--tag", default=None,
+              help="Image tag to build (default: vash-env-<repo-name>:latest).")
+@click.option("--max-attempts", default=3, type=int,
+              help="Build attempts, including repair retries (default: 3).")
+@click.option("--no-verify", is_flag=True, default=False,
+              help="Skip running the ecosystem's build/test command inside the "
+                   "built image.")
+@click.option("--verify-network", default="none",
+              type=click.Choice(["none", "bridge"]),
+              help="Container network for the verify step (default: none — "
+                   "verification runs offline).")
+@click.option("--out", "out_path", default=None, type=click.Path(),
+              help="Write the full provisioning record as JSON here.")
+def provision_cmd(repo: str, build: bool, tag: str | None, max_attempts: int,
+                  no_verify: bool, verify_network: str,
+                  out_path: str | None) -> None:
+    """Fingerprint a repo and render (optionally build) its environment image.
+
+    Decoupled + offline by default — no LLM, no cost, no network: it reads the
+    repo's manifests and prints the Dockerfile VASH would build. With --build it
+    runs `docker build`, retries with a deterministic repair ladder when the
+    build fails, then verifies the image by running the ecosystem's build/test
+    command inside it.
+
+    Safety: --build executes the TARGET's own build instructions (npm postinstall
+    scripts, maven plugins, ...). Those always run inside a container — never on
+    this host — and the verify step additionally runs with no network and
+    dropped privileges.
+    """
+    from vash.provision import provision_environment
+
+    repo_path = Path(repo).resolve()
+    result = provision_environment(
+        repo_path, build=build, tag=tag, max_attempts=max_attempts,
+        verify=not no_verify, verify_network=verify_network,
+    )
+
+    fp = result.fingerprint
+    console.print(f"[bold]repo:[/bold] {repo_path}")
+    console.print(f"[bold]languages:[/bold] {', '.join(fp.get('languages') or []) or '-'} "
+                  f"(primary: {fp.get('primary_language') or '-'})")
+    console.print(f"[bold]build systems:[/bold] "
+                  f"{', '.join(fp.get('build_systems') or []) or '-'}")
+    if fp.get("version_pins"):
+        console.print(f"[bold]version pins:[/bold] {fp['version_pins']}")
+    console.print(f"[bold]recipe source:[/bold] {result.source}")
+
+    if result.dockerfile:
+        console.print("\n[dim]--- Dockerfile ---[/dim]")
+        # markup=False: a Dockerfile (and a repair note) may contain
+        # [brackets], which Rich would otherwise swallow as markup tags.
+        console.print(result.dockerfile.rstrip(), markup=False, highlight=False)
+        console.print("[dim]------------------[/dim]\n")
+
+    for a in result.attempts:
+        state = "[green]ok[/green]" if a.ok else f"[red]exit {a.exit_code}[/red]"
+        via = f" (after repair: {a.repair_rule})" if a.repair_rule else ""
+        console.print(f"build attempt {a.attempt}: {state}{via}")
+    for note in result.notes:
+        console.print("[yellow]note:[/yellow] " + escape(note))
+
+    v = result.verify
+    if v and v.ran:
+        if v.deps_ok is not None:
+            console.print(f"verify deps:  {'[green]ok[/green]' if v.deps_ok else '[red]MISSING[/red]'}")
+        if v.build_ok is not None:
+            console.print(f"verify build: {'[green]ok[/green]' if v.build_ok else '[red]FAILED[/red]'}")
+        if v.test_ok is not None:
+            console.print(f"verify test:  {'[green]ok[/green]' if v.test_ok else '[yellow]failed[/yellow]'}")
+
+    color = {"built": "green", "planned": "cyan",
+             "failed": "red", "skipped": "yellow"}.get(result.status, "white")
+    console.print(f"\n[{color}]status: {result.status}[/{color}]"
+                  + (f" — image {result.image_tag}" if result.status == "built" else ""))
+
+    if out_path:
+        Path(out_path).write_text(json.dumps(result.to_dict(), indent=2))
+        console.print(f"record: {out_path}")
+
+    if result.status == "failed":
+        sys.exit(1)
 
 
 @main.command("status")

@@ -1,12 +1,32 @@
 """Render a Dockerfile for a fingerprinted repo. Prefers an existing repo
 recipe; otherwise emits a per-ecosystem template STRING. Text only — this
-module never runs `docker build` (Phase 2 owns build/verify/repair)."""
+module never runs `docker build` (`build.py` owns build/verify/repair)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from vash.provision.fingerprint import ProjectFingerprint
+
+# Dependency-presence probe for the ecosystems whose `build` command cannot
+# fail on missing dependencies (python's `python -c ...` and npm's
+# `--if-present` are both no-ops on a bare image, so "built" would otherwise
+# hide an environment with none of the target's dependencies installed).
+# POSIX sh, offline, read-only. Go/Maven/Gradle/dotnet need no probe: their
+# build command already fails hard when dependencies are missing.
+_PIP_DEPS_PROBE = (
+    "[ -f requirements.txt ] || exit 0; "
+    "pip freeze 2>/dev/null | sed -e 's/[[:space:]]*@.*//' -e 's/[=<>].*//' "
+    "| tr 'A-Z_' 'a-z-' | sort -u > /tmp/have; "
+    "sed -e 's/#.*//' -e 's/\\[.*\\]//' -e 's/[<>=!~;].*//' -e 's/[[:space:]]//g' "
+    "requirements.txt | grep -v '^$' | grep -v '^-' | tr 'A-Z_' 'a-z-' | sort -u > /tmp/want; "
+    "missing=$(comm -23 /tmp/want /tmp/have); "
+    "[ -z \"$missing\" ] || { echo \"MISSING DEPENDENCIES: $missing\"; exit 1; }"
+)
+_NPM_DEPS_PROBE = (
+    "[ -f package.json ] || exit 0; "
+    "[ -d node_modules ] || { echo 'MISSING DEPENDENCIES: node_modules absent'; exit 1; }"
+)
 
 # build-system -> template pieces. {ver} is filled from version_pins when present.
 ECOSYSTEM_TEMPLATES: dict[str, dict] = {
@@ -17,6 +37,7 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "install": "RUN npm ci || npm install",
         "build": "npm run build --if-present",
         "test": "npm test --if-present",
+        "deps": _NPM_DEPS_PROBE,
     },
     "maven": {
         "base": "maven:3.9-eclipse-temurin-{ver}",
@@ -54,9 +75,16 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "base": "python:{ver}-slim",
         "default_ver": "3.11",
         "ver_key": "python",
-        "install": "RUN pip install -e . || pip install -r requirements.txt || true",
+        # Both steps run, independently: a succeeding `pip install -e .` used to
+        # short-circuit the `||` chain and leave requirements.txt uninstalled —
+        # an image that builds but has none of the target's dependencies.
+        "install": (
+            "RUN if [ -f requirements.txt ]; then pip install -r requirements.txt || true; fi \\\n"
+            "    && if [ -f setup.py ] || [ -f pyproject.toml ]; then pip install -e . || true; fi"
+        ),
         "build": "python -c \"import sys; print(sys.version)\"",
         "test": "pytest -q || true",
+        "deps": _PIP_DEPS_PROBE,
     },
     "poetry": {
         "base": "python:{ver}-slim",
@@ -65,6 +93,7 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "install": "RUN pip install poetry && poetry install --no-root || true",
         "build": "python -c \"import sys; print(sys.version)\"",
         "test": "poetry run pytest -q || true",
+        "deps": _PIP_DEPS_PROBE,
     },
 }
 
@@ -88,6 +117,9 @@ class RenderedRecipe:
     dockerfile: str | None = None
     build_cmd: str | None = None
     test_cmd: str | None = None
+    # Optional dependency-presence probe run by the Phase 2 verify step for
+    # ecosystems whose build command cannot itself fail on missing deps.
+    deps_cmd: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -126,6 +158,6 @@ def render_dockerfile(fp: ProjectFingerprint, repo_path: Path) -> RenderedRecipe
     ]) + "\n"
     return RenderedRecipe(
         source="template", path=None, dockerfile=dockerfile,
-        build_cmd=t["build"], test_cmd=t["test"],
+        build_cmd=t["build"], test_cmd=t["test"], deps_cmd=t.get("deps"),
         notes=[f"templated {eco} (base={base})"],
     )
