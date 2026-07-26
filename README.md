@@ -417,7 +417,7 @@ vash/
 ├── scripts/run-in-docker.sh # sandboxed (executed-PoC) runner
 ├── tests/                   # 825 offline tests
 ├── Dockerfile               # the isolation sandbox image
-├── NOTICE / THIRD_PARTY_LICENSES.md   # attribution
+├── NOTICE / licenses/       # third-party attribution + licence texts
 └── docs/                    # design specs & benchmark write-ups
 ```
 
@@ -463,7 +463,7 @@ Deterministically scored by the `bench/` harness (50 Python files + 20 Jinja2 te
 
 VASH is released under the **MIT License** — see [`LICENSE`](LICENSE).
 
-Origin: [evilsocket/audit](https://github.com/evilsocket/audit). Full third-party notices are kept in [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+Origin: [evilsocket/audit](https://github.com/evilsocket/audit). Third-party attribution and licence texts are in [`NOTICE`](NOTICE) and [`licenses/`](licenses).
 
 ## ⚠️ Responsible use
 

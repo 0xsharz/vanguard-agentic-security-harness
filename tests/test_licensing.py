@@ -1,5 +1,5 @@
 """Compliance guard (Task 4.8): verbatim Apache-2.0 ports must retain their
-headers, and the NOTICE / THIRD_PARTY_LICENSES / license texts must exist.
+headers, and the NOTICE / LICENSE / license texts must exist.
 
 If someone strips an Apache-2.0 header off a verbatim-ported file, or deletes the
 attribution files, this test fails — keeping VASH license-compliant.
@@ -28,7 +28,7 @@ def test_verbatim_ports_retain_apache_header():
 
 
 def test_attribution_files_exist():
-    for rel in ("NOTICE", "THIRD_PARTY_LICENSES.md", "LICENSE"):
+    for rel in ("NOTICE", "LICENSE"):
         assert (REPO / rel).is_file(), f"missing {rel}"
 
 
@@ -47,7 +47,10 @@ def test_notice_credits_all_three_donors():
         assert name in notice, f"NOTICE does not credit {name}"
 
 
-def test_third_party_licenses_documents_verbatim_ports():
-    doc = (REPO / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
+def test_notice_documents_verbatim_ports():
+    """Apache-2.0 §4 requires the attribution to travel with the work. NOTICE is
+    the file the licence actually mandates, so the verbatim ports must be named
+    there — not only in a convenience document that can be deleted."""
+    doc = (REPO / "NOTICE").read_text(encoding="utf-8")
     for rel in APACHE_PORTS:
-        assert rel in doc, f"THIRD_PARTY_LICENSES.md omits verbatim port {rel}"
+        assert rel in doc, f"NOTICE omits verbatim port {rel}"

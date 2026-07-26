@@ -63,7 +63,7 @@ _VASH_PAYLOAD = [
     ("config", "./config"),
     ("bench", "./bench"),
     ("licenses", "./licenses"),
-    ("NOTICE THIRD_PARTY_LICENSES.md LICENSE", "./"),
+    ("NOTICE LICENSE", "./"),
 ]
 
 # Create VASH's venv. The provisioned base may be python:3.11-slim (python +

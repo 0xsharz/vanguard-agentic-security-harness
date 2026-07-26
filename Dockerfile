@@ -26,7 +26,7 @@ COPY schemas ./schemas
 COPY config ./config
 COPY bench ./bench
 COPY licenses ./licenses
-COPY NOTICE THIRD_PARTY_LICENSES.md LICENSE ./
+COPY NOTICE LICENSE ./
 RUN pip install --no-cache-dir -e .
 
 # Belt-and-suspenders: mark the sandbox explicitly (in addition to /.dockerenv).

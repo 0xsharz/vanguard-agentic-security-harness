@@ -5,8 +5,8 @@ This product is derived from and reuses portions of three prior works. It is a
 fork of evilsocket/audit, with capability and production grafts adapted from
 Capital One VulnHunter and Visa VVAH. Portions that carry an Apache-2.0 header
 in-file are licensed under Apache-2.0; all other original VASH code is under the
-MIT License (see LICENSE). Full third-party license texts are in licenses/ and
-the per-component attribution is in THIRD_PARTY_LICENSES.md.
+MIT License (see LICENSE). Full third-party license texts are in licenses/;
+the per-component attribution is below.
 
 --------------------------------------------------------------------------------
 evilsocket/audit  —  MIT License
