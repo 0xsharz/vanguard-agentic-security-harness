@@ -461,9 +461,7 @@ Deterministically scored by the `bench/` harness (50 Python files + 20 Jinja2 te
 
 ## 📜 License
 
-VASH is released under the **MIT License** — see [`LICENSE`](LICENSE).
-
-Origin: [evilsocket/audit](https://github.com/evilsocket/audit). Third-party attribution and licence texts are in [`NOTICE`](NOTICE) and [`licenses/`](licenses).
+VASH is released under the **MIT License** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 ## ⚠️ Responsible use
 
