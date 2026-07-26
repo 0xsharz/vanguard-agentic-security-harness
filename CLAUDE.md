@@ -39,7 +39,7 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
   Verify probes **dependency presence** — an image that builds but lacks the target's deps is reported
   INCOMPLETE, not success (this caught a real Phase-1 template bug: `pip install -e . || pip install -r
   requirements.txt` short-circuited and left deps uninstalled).
-- **Phase 3 IN PROGRESS — Python DONE + PROVEN** (`fdb29f7..c91c086`). USER DIRECTIVE 2026-07-26: language
+- **Phase 3 COMPLETE for all 5 languages — PROVEN BY LIVE RUNS** (`fdb29f7..c91c086`). USER DIRECTIVE 2026-07-26: language
   support must be **IN THE PIPELINE FLOW — no decoupled command**. A `vash poc` command was built from the
   approved spec and then **reverted at user request** (do not rebuild it; the spec is stale on this point).
   - `vash/lang/poc_runtime.py` — per-language Runtime registry (python/js/ts/java/go/csharp): poc filename,
@@ -92,7 +92,7 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
     | `nodecjs1` | node cjs | CWE-78 critical | `child_process.execSync`; one PoC ran end-to-end through the HTTP server | $5.32 / 14m |
     | `java1` | java | CWE-78 critical | **JFR stackTrace naming `ReportService.buildReport line 10`** | $7.41 / 16m |
     | `go1` | go | CWE-78 critical | strace execve chain → `sh -c ...; id` | $5.06 / 12m |
-    | `cs1` | csharp | CWE-78 critical (conf 0.99) | strace execve + `uid=0(root)` | ~$5 |
+    | `cs1` | csharp | CWE-78 critical | strace execve + `uid=0(root)` | $6.20 / 20m |
 
     Each run also surfaced REAL unplanted bugs (no-auth endpoint, single-threaded-server DoS proven with a
     19s stall, terminal-escape injection, never-reaped child processes) and built exploit chains
