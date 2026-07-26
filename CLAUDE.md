@@ -82,8 +82,21 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
     java JFR (**best evidence of all** — stackTrace names `ReportService.buildReport line 10`); go strace
     (needed BOTH `strace` installed in the scan image AND `--cap-add=SYS_PTRACE`, now in run-in-docker.sh).
     C# ships no observer, honestly.
-  - **LIVE RUNS**: `vulnpy1` py 5 delivered all poc=1 · `nodecjs1` node CWE-78 critical poc=1 with
-    `child_process.execSync` evidence (one PoC went end-to-end through the HTTP server), $5.32/14m.
+  - **LIVE RUNS — every language found its planted bug AND proved it by execution** (targets in
+    `scratchpad/vulntargets/`; self-authored, so they validate MACHINERY not recall — never quote as a
+    recall number):
+
+    | run | target | planted bug delivered | evidence | cost/time |
+    |---|---|---|---|---|
+    | `vulnpy1` | python | CWE-78 + CWE-502, both critical | audit-hook `subprocess.Popen`/`os.system` | $9.17 / 17m |
+    | `nodecjs1` | node cjs | CWE-78 critical | `child_process.execSync`; one PoC ran end-to-end through the HTTP server | $5.32 / 14m |
+    | `java1` | java | CWE-78 critical | **JFR stackTrace naming `ReportService.buildReport line 10`** | $7.41 / 16m |
+    | `go1` | go | CWE-78 critical | strace execve chain → `sh -c ...; id` | $5.06 / 12m |
+    | `cs1` | csharp | CWE-78 critical (conf 0.99) | strace execve + `uid=0(root)` | ~$5 |
+
+    Each run also surfaced REAL unplanted bugs (no-auth endpoint, single-threaded-server DoS proven with a
+    19s stall, terminal-escape injection, never-reaped child processes) and built exploit chains
+    ("missing auth + injection = unauthenticated RCE").
   - **Per-language status (all observers VERIFIED by hand in the real scan image):**
 
     | lang | poc | compile | observer | evidence quality |
