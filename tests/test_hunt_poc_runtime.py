@@ -245,3 +245,17 @@ def test_prompt_keeps_the_existing_live_target_and_availability_branches() -> No
     idx_live = text.index("If `live_target` is in input")
     idx_local = text.index("Otherwise (no `live_target`)")
     assert idx_live < idx_local < text.index("`poc_execution`", idx_local)
+
+
+def test_prompt_requires_the_observer_decision_to_be_recorded() -> None:
+    """A real scan gave 75 hunt tasks the observer recipe and NOT ONE finding
+    mentioned it — not even the armed banner. The observer was verified working
+    in that same image, so the agents simply chose not to use it and never said
+    so. Skipping it can be correct (a CPU-exhaustion PoC has nothing to observe)
+    but the silence made "judged irrelevant" indistinguishable from "ignored the
+    instruction" or "the wrapper broke"."""
+    from vash.stages._common import PROMPTS
+    body = (PROMPTS / "02-hunt.md").read_text()
+    assert "State your observer decision in `poc.notes`" in body
+    assert "not applicable" in body
+    assert "Silence is not acceptable" in body

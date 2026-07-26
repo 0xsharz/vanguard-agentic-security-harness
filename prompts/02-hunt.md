@@ -228,6 +228,17 @@ user- or config-supplied `Authorization`/token header reachable from the except 
            again.
          A marker on its own only says "a process was spawned" — which innocent
          code does too. The attribution is what ties it to the vulnerability.
+       - **State your observer decision in `poc.notes` — always, in one line.**
+         Whichever of these applies: "observer <name>: evidence captured
+         (<marker>)", or "observer <name>: available_check failed (<tool>
+         missing)", or "observer <name>: not applicable — <reason>" (e.g. a
+         CPU-exhaustion PoC spawns no process and opens no socket, so a
+         process/file/socket observer has nothing to record; the timing curve
+         is the evidence). Silence is not acceptable: a finding whose notes say
+         nothing about the observer is indistinguishable from one where the
+         instruction was ignored or the wrapper silently failed, and a reviewer
+         cannot tell which. Deciding the observer is irrelevant is a perfectly
+         good answer — not saying so is not.
        - **Honesty rule — an observer is corroboration, never a verdict.**
          If the `available_check` fails (tooling not installed, capability
          not granted) or the wrapped run produces no marker lines, that is
