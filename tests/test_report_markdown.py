@@ -442,3 +442,39 @@ def test_totally_degenerate_payload_does_not_raise() -> None:
 def test_findings_count_in_header() -> None:
     md = render_report(_enriched_report())
     assert "## Findings (2)" in md
+
+
+def test_poc_block_renders_the_runtime_observer_evidence() -> None:
+    """The observer lines are the receipt that the exploit actually fired — a
+    report showing the PoC script without them makes the tool's central claim
+    unverifiable to the reader."""
+    from vash.reporting.markdown import _poc_block
+    md = "\n".join(_poc_block({
+        "language": "python",
+        "code": "import app; app.build_report('x; id')",
+        "succeeded": True,
+        "observer_evidence": [
+            "[VASH-OBSERVER] audit:subprocess.Popen ('/bin/sh', ['-c', 'echo x; id'])"
+            "  <- from /target/app/reports.py:7 in build_report",
+        ],
+        "notes": "ran under the PEP-578 audit hook",
+    }))
+    assert "Runtime observer evidence" in md
+    assert "audit:subprocess.Popen" in md
+    assert "build_report" in md                 # the attribution survives
+    assert "ran under the PEP-578 audit hook" in md
+
+
+def test_poc_block_falls_back_to_raw_output_when_there_is_no_observer() -> None:
+    from vash.reporting.markdown import _poc_block
+    md = "\n".join(_poc_block({
+        "language": "go", "code": "package main", "succeeded": True,
+        "run_output": "target says: pwned\n",
+    }))
+    assert "PoC output" in md and "target says: pwned" in md
+
+
+def test_poc_block_unchanged_when_there_is_no_poc() -> None:
+    from vash.reporting.markdown import _poc_block
+    assert _poc_block(None) == [NOT_DETERMINED]
+    assert _poc_block({"language": "py"}) == [NOT_DETERMINED]

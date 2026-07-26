@@ -601,6 +601,26 @@ def _poc_block(poc: Any) -> list[str]:
         status = "executed successfully" if succeeded else "not executed (static run)"
         out.append("")
         out.append(f"_PoC status: {status}._")
+
+    # The observer evidence is the receipt: it records that the dangerous
+    # operation was seen to FIRE (a process spawned, a socket opened) and — via
+    # the attribution suffix / JFR stack trace — that it fired from the target's
+    # own code. Without it a reader has the exploit script but no proof it ran,
+    # which is precisely the claim this tool exists to make.
+    evidence = poc.get("observer_evidence")
+    if isinstance(evidence, list) and evidence:
+        out += ["", "**Runtime observer evidence** — the dangerous operation was "
+                    "observed as it fired:", ""]
+        out += _fenced("\n".join(str(e) for e in evidence[:12]), "text")
+
+    run_output = _s(poc.get("run_output"))
+    if run_output and not evidence:
+        out += ["", "**PoC output:**", ""]
+        out += _fenced(run_output[-1200:], "text")
+
+    notes = _s(poc.get("notes"))
+    if notes:
+        out += ["", f"_{notes}_"]
     return out
 
 
