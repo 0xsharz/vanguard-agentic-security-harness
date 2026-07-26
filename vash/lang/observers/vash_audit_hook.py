@@ -154,6 +154,42 @@ def _in_import_machinery() -> bool:
     return False
 
 
+def _attribution() -> str:
+    """`  <- from file:line in func` naming the code that caused the event.
+
+    Without this an event line only proves "a process was spawned" — which
+    perfectly innocent code also does. What makes it EVIDENCE is that the spawn
+    came from the sink under test. This is the attribution JFR gives Java for
+    free via its stackTrace.
+
+    Interpreter and stdlib frames are skipped (the nearest frame to a
+    `subprocess.run` is always `subprocess.py:_execute_child`, which says
+    nothing). This observer's own frames are skipped too. The PoC is NOT
+    skipped, deliberately: if the nearest user frame is the PoC rather than the
+    target, the PoC reached the sink DIRECTLY and therefore proves nothing about
+    the target — the hunter needs to see that.
+
+    Best-effort: any failure yields "" rather than breaking the event line.
+    """
+    try:
+        frame = sys._getframe(1)
+    except Exception:
+        return ""
+    me = os.path.normcase(os.path.abspath(__file__))
+    depth = 0
+    while frame is not None and depth < _FRAME_SCAN_LIMIT:
+        try:
+            raw = frame.f_code.co_filename
+            path = os.path.normcase(os.path.abspath(raw))
+        except Exception:
+            return ""
+        if path != me and not any(path.startswith(r) for r in _NOISE_ROOTS):
+            return (f"  <- from {raw}:{frame.f_lineno} in {frame.f_code.co_name}")
+        frame = frame.f_back
+        depth += 1
+    return ""
+
+
 def _hook(event: str, args: tuple) -> None:
     if not _state["armed"] or _state["reentrant"]:
         return
@@ -179,7 +215,7 @@ def _hook(event: str, args: tuple) -> None:
             if seen == MAX_PER_EVENT + 1:
                 _emit(f"{MARKER} audit:{event} <further occurrences suppressed>")
             return
-        _emit(f"{MARKER} audit:{event} {_short(args)}")
+        _emit(f"{MARKER} audit:{event} {_short(args)}{_attribution()}")
     except Exception:
         pass
     finally:

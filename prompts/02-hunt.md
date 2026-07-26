@@ -214,6 +214,20 @@ user- or config-supplied `Authorization`/token header reachable from the except 
          `observer.files` are helper files
          already written into `$scratch_dir` for you; `observer.notes` lists
          that mechanism's blind spots — read them before you claim proof.
+       - **Read the attribution on each marker — it decides whether the marker
+         is evidence at all.** Markers carry `<- from <file>:<line>` (Java's JFR
+         carries a full `stackTrace`), naming the code that performed the
+         dangerous operation:
+         - it names a file in the **target** (ideally the sink from this task) →
+           the vulnerable path really executed. This is your strongest evidence;
+           quote that line into `poc.run_output`.
+         - it names **your own PoC file** → your PoC called the sink directly
+           and never went through the target's code. That proves nothing about
+           the finding. Rewrite the PoC to enter through the target's public
+           entry point (the function/route/handler named in the task) and run it
+           again.
+         A marker on its own only says "a process was spawned" — which innocent
+         code does too. The attribution is what ties it to the vulnerability.
        - **Honesty rule — an observer is corroboration, never a verdict.**
          If the `available_check` fails (tooling not installed, capability
          not granted) or the wrapped run produces no marker lines, that is

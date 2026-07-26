@@ -43,6 +43,30 @@ function emit(kind, detail) {
   } catch (err) { /* instrumentation must never break the PoC */ }
 }
 
+// `  <- from file:line` naming the code that caused the call.
+//
+// Without it an event line only proves "a process was spawned", which innocent
+// code does too. What makes it EVIDENCE is that the call came from the sink
+// under test. Node frames (internal/*, node:*) and this observer's own frames
+// are skipped; the PoC is NOT skipped on purpose — if the nearest user frame is
+// the PoC itself, the PoC reached the sink DIRECTLY and proves nothing about
+// the target, and the hunter needs to see that.
+function attribution() {
+  try {
+    const stack = new Error().stack || '';
+    const lines = stack.split('\n').slice(1);
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith('at ')) continue;
+      if (line.includes(__filename)) continue;              // this observer
+      if (line.includes('node:internal') || line.includes('node:')) continue;
+      const m = line.match(/\(?([^()\s]+:\d+:\d+)\)?$/);
+      if (m) return '  <- from ' + m[1];
+    }
+  } catch (err) { /* attribution is best effort */ }
+  return '';
+}
+
 function record(kind, detail) {
   const seen = (counts[kind] = (counts[kind] || 0) + 1);
   if (seen > MAX_PER_KIND) {
@@ -51,7 +75,7 @@ function record(kind, detail) {
     }
     return;
   }
-  emit(kind, detail);
+  emit(kind, detail + attribution());
 }
 
 function describe(args) {

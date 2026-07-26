@@ -146,7 +146,11 @@ PYTHON_AUDIT_HOOK = Observer(
         "(the wrap already folds stderr into stdout). A `hook-armed` banner "
         "line proves the hook ran, which is how you tell 'observer saw "
         "nothing' apart from 'observer never ran'. Import-time noise (opening "
-        ".py files, compiling the PoC itself) is filtered out on purpose. " +
+        ".py files, compiling the PoC itself) is filtered out on purpose. "
+        "Each marker carries `<- from file:line in func` naming the code that "
+        "caused the event (interpreter/stdlib frames are skipped): if it names "
+        "the TARGET's file the vulnerable path really ran; if it names your PoC "
+        "the PoC hit the sink directly and proves nothing about the target. " +
         _HONESTY
     ),
 )
@@ -184,7 +188,10 @@ NODE_PRELOAD = Observer(
         "wrapped — only vm.* is visible; a native addon that syscalls "
         "directly is invisible too. Reads of .js/.json/.node are suppressed "
         "because the CommonJS loader itself uses fs.readFileSync. A "
-        "`preload-armed` line proves the preload ran. " + _HONESTY
+        "`preload-armed` line proves the preload ran. Each marker carries "
+        "`<- from file:line:col` naming the calling code (node internals "
+        "skipped): the TARGET's file means the vulnerable path ran; your own "
+        "PoC file means the PoC bypassed the target. " + _HONESTY
     ),
 )
 

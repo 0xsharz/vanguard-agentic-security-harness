@@ -444,3 +444,52 @@ def test_go_compiles_before_tracing_so_the_toolchain_is_not_the_evidence() -> No
     assert go.compile_cmd and "go build" in go.compile_cmd
     assert "go run" not in go.run_cmd
     assert go.run_cmd.strip().startswith("./")
+
+
+def test_markers_attribute_to_the_code_that_caused_the_event(tmp_path) -> None:
+    """A marker alone only says "a process spawned" — innocent code does that
+    too. The attribution is what ties it to the vulnerability, so it must name
+    the TARGET's frame, not the stdlib frame nearest the call."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "vash_vulnmod.py").write_text(
+        "import subprocess\n"
+        "\n"
+        "\n"
+        "def build_report(name):\n"
+        "    return subprocess.run('echo ' + name, shell=True, capture_output=True).stdout\n"
+    )
+    scratch = tmp_path / "s"
+    scratch.mkdir()
+    materialize_observer(RUNTIMES["python"], scratch)
+    (scratch / "poc.py").write_text(
+        "import vash_vulnmod\nprint(vash_vulnmod.build_report('x; echo hi'))\n"
+    )
+    p = subprocess.run(
+        [sys.executable, str(scratch / "vash_audit_hook.py"),
+         f"PYTHONPATH={lib}", str(scratch / "poc.py")],
+        cwd=scratch, capture_output=True, text=True, timeout=120,
+    )
+    out = p.stdout + p.stderr
+    line = next(ln for ln in out.splitlines() if "audit:subprocess.Popen" in ln)
+    assert "<- from" in line, line
+    assert "vash_vulnmod.py:5 in build_report" in line, line   # the target's frame
+    assert "subprocess.py" not in line.split("<- from")[1], line  # not the stdlib
+
+
+def test_attribution_names_the_poc_when_the_poc_bypasses_the_target(tmp_path) -> None:
+    """If the PoC calls the sink directly it proves nothing about the target —
+    the hunter must be able to see that from the evidence."""
+    scratch = tmp_path / "s"
+    scratch.mkdir()
+    materialize_observer(RUNTIMES["python"], scratch)
+    (scratch / "poc.py").write_text(
+        "import subprocess\nsubprocess.run('echo direct', shell=True, capture_output=True)\n"
+    )
+    p = subprocess.run(
+        [sys.executable, str(scratch / "vash_audit_hook.py"), str(scratch / "poc.py")],
+        cwd=scratch, capture_output=True, text=True, timeout=120,
+    )
+    out = p.stdout + p.stderr
+    line = next(ln for ln in out.splitlines() if "audit:subprocess.Popen" in ln)
+    assert "poc.py:2" in line, line
