@@ -84,8 +84,24 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
     C# ships no observer, honestly.
   - **LIVE RUNS**: `vulnpy1` py 5 delivered all poc=1 · `nodecjs1` node CWE-78 critical poc=1 with
     `child_process.execSync` evidence (one PoC went end-to-end through the HTTP server), $5.32/14m.
-  - **NEXT**: finish Java + Go live runs; C# target exists (`vulntargets/vuln-csharp`) but no scan image yet
-    (dotnet SDK is large). Rebuild scan images to pick up attribution + strace before further runs.
+  - **Per-language status (all observers VERIFIED by hand in the real scan image):**
+
+    | lang | poc | compile | observer | evidence quality |
+    |---|---|---|---|---|
+    | python | poc.py | – | PEP-578 audit hook | events + `<- from` attribution |
+    | javascript | poc.js | – | node `--require` preload | events + attribution; **ESM covered** |
+    | typescript | poc.ts | local `tsc` (npx last resort — container is OFFLINE) | node preload | as JS |
+    | java | PoC.java | `javac -cp $CP` | **JFR** | **best: stackTrace names the sink method** |
+    | go | poc.go | `go build` (never `go run` — traces the compiler) | strace | execve chain |
+    | csharp | Poc.cs | `dotnet build` | strace | execve chain; ref bin/ NOT obj/**/refint |
+
+  - **Gotchas worth remembering**: `/target` is READ-ONLY → Go/C#/JS recipes copy to /tmp first;
+    Debian bases (node/golang) have a python3.11 whose `venv` is broken → scan-image probe ATTEMPTS a venv
+    then falls back to uv; C# `find -name '*.dll'` hits `obj/**/refint` reference assemblies →
+    `BadImageFormatException` at run time.
+  - **NEXT after live runs**: consider rebuilding py/node scan images to pick up attribution; a real CVE
+    benchmark re-run (dmcg 5/11) has NOT been done since Phase 2 added `project_environment` to prompts —
+    unmeasured, and the only open risk to the published recall number.
 - C/C++ deferred entirely per user.
 
 ## How to run (Docker, the real way)
