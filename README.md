@@ -176,6 +176,15 @@ exploit chains:
 **Every one carries `poc_succeeded=true`** — an exploit was written, executed in the
 container, and observed. 22 minutes, $10.33.
 
+📎 **[The full report from this run →](docs/example-report.md)** — threat model, per-finding
+advisory blocks, the exploit code, and the observer lines showing each dangerous
+operation as it fired:
+
+```text
+[VASH-OBSERVER] audit:subprocess.Popen ('/bin/sh', ['-c', 'note2pdf --title x; echo VASH_PWNED_MARKER; …'])
+    <- from /target/app/notes.py:10 in export_note
+```
+
 
 ## 🖥️ Commands
 
@@ -277,6 +286,8 @@ vash auth-check               # verify Claude Code auth is configured
 ```
 
 ## 📄 The report
+
+> **📎 [Read a real one →](docs/example-report.md)** — the complete, unedited report from the scan above, including the runtime observer evidence for each finding.
 
 Every run writes a raw, machine-readable **`report.json`** and a detailed, advisory-grade **`report.md`**. The Markdown report is deterministic and structured like a professional pentest deliverable:
 
