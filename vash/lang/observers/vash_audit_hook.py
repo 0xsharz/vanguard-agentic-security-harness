@@ -35,6 +35,7 @@ observer ran and saw nothing".
 from __future__ import annotations
 
 import os
+import re
 import runpy
 import sys
 
@@ -185,6 +186,40 @@ def _hook(event: str, args: tuple) -> None:
         _state["reentrant"] = False
 
 
+_ENV_ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
+
+
+def _apply_env_assignments(argv: list[str]) -> list[str]:
+    """Consume leading `NAME=VALUE` tokens and apply them to this process.
+
+    The runtime's own deps_hint tells the agent to reach the target with
+    `PYTHONPATH=/target python3 poc.py`. The shell only treats `NAME=VALUE` as
+    an assignment at the START of a command, so once that command is spliced
+    after `python3 <hook>` the assignment arrives here as a plain argv token —
+    the wrapper would then treat "PYTHONPATH=/target" as the script name and
+    exit 2 WITHOUT EVER RUNNING THE POC, which reads downstream as "the
+    observer saw nothing". Applying it here keeps the documented invocation
+    working, and because it is applied before the PoC is loaded, the PoC sees
+    the intended import path.
+    """
+    out = list(argv)
+    while out:
+        m = _ENV_ASSIGN.match(out[0])
+        if not m:
+            break
+        name, value = m.group(1), m.group(2)
+        os.environ[name] = value
+        if name == "PYTHONPATH":
+            # sys.path was already built from the inherited environment, so
+            # setting os.environ alone would be too late for this process.
+            for part in reversed(value.split(os.pathsep)):
+                if part and part not in sys.path:
+                    sys.path.insert(0, part)
+        _emit(f"{MARKER} env {name}={value}")
+        out.pop(0)
+    return out
+
+
 def _strip_interpreter(argv: list[str]) -> list[str]:
     """Drop a leading `python3 [-u ...]` so the wrapper can be spliced in front
     of a plain run command (`python3 vash_audit_hook.py <run_cmd>`)."""
@@ -203,7 +238,9 @@ def _strip_interpreter(argv: list[str]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    cmd = _strip_interpreter(argv)
+    # Order matters: `PYTHONPATH=/target python3 poc.py` puts the assignment
+    # first, and a `python3` may follow it.
+    cmd = _strip_interpreter(_apply_env_assignments(argv))
     if not cmd or cmd[0].startswith("-"):
         _emit(f"{MARKER} usage: vash_audit_hook.py [python3] <poc.py> [args...] "
               "(only the script form is observable; `-c` / `-m` are not)")

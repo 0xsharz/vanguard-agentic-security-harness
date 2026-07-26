@@ -116,7 +116,11 @@ PYTHON_AUDIT_HOOK = Observer(
           "loads; the wrapper runs the PoC via runpy with the hook armed and "
           "prints one marker line per event. Optional instrumentation."),
     asset="vash_audit_hook.py",
-    wrap='python3 vash_audit_hook.py {cmd} 2>&1',
+    # {observer} is substituted with the ABSOLUTE materialized asset path by
+    # poc_execution_block. A relative name (or $PWD) breaks the moment the
+    # agent follows deps_hint and `cd /target` — node/python then abort at
+    # startup having never run the PoC, which reads as "no evidence".
+    wrap='python3 {observer} {cmd} 2>&1',
     evidence_markers=(
         MARKER + " audit:subprocess.Popen",
         MARKER + " audit:os.system",
@@ -156,7 +160,7 @@ NODE_PRELOAD = Observer(
           "http/https and vm before the entry module loads, printing one "
           "marker line per call. Optional instrumentation."),
     asset="vash_node_observer.js",
-    wrap='NODE_OPTIONS="--require $PWD/vash_node_observer.js" {cmd} 2>&1',
+    wrap='NODE_OPTIONS="--require {observer}" {cmd} 2>&1',
     evidence_markers=(
         MARKER + " node:child_process.",
         MARKER + " node:fs.",
@@ -169,7 +173,13 @@ NODE_PRELOAD = Observer(
     notes=(
         "NODE_OPTIONS is used instead of a bare `--require` flag so the wrap "
         "composes with any run command (`node poc.js`, `npx tsx poc.ts`). "
-        "$PWD must be the scratch dir where the asset was materialized. "
+        "The preload path is absolute, so the wrap keeps working after a "
+        "`cd /target`. NOTE: `--require` is a CommonJS hook — an ESM entry "
+        "(package.json `\"type\": \"module\"`, or a .mjs PoC) still loads the "
+        "preload, so builtins patched here ARE observed when the target calls "
+        "them, but a pure `import`-only path that never touches a patched "
+        "builtin is invisible. Prefer writing the PoC as CommonJS (.cjs) when "
+        "you need the strongest observation. "
         "`eval` / `new Function` are language constructs and cannot be "
         "wrapped — only vm.* is visible; a native addon that syscalls "
         "directly is invisible too. Reads of .js/.json/.node are suppressed "
@@ -239,8 +249,14 @@ STRACE_OBSERVER = Observer(
         "needs `--cap-add=SYS_PTRACE` (or `--security-opt seccomp=unconfined`). "
         "The available_check above actually attempts a trace, so it fails for "
         "the permission case and not only for a missing binary. `-f` follows "
-        "the goroutine threads and any child process. Expect openat noise from "
-        "the Go runtime's own startup. " + _HONESTY
+        "the goroutine threads and any child process. "
+        "**Trace the BUILT BINARY, never `go run`** — the toolchain's own "
+        "execve/openat would satisfy these markers unconditionally, making "
+        "every PoC look like it spawned a process. The runtime's compile_cmd "
+        "builds first for exactly this reason. Even so, `openat(` fires "
+        "during ordinary Go runtime startup, so treat `execve(` and "
+        "`connect(` as the load-bearing markers and read the traced path/"
+        "argument before calling an openat hit proof. " + _HONESTY
     ),
 )
 
@@ -277,16 +293,20 @@ RUNTIMES: dict[str, Runtime] = {
         deps_hint=(
             "Node resolves `require`/`import` by walking up from the "
             "IMPORTING FILE's directory, so a poc.js sitting in the scratch "
-            "dir will NOT see /target/node_modules. Three ways to reach the "
-            "target's dependencies, best first: (1) `require('/target/<entry>')` "
-            "by absolute path and run with "
-            "`NODE_PATH=/target/node_modules node poc.js`; (2) write the PoC "
-            "inside the target tree (e.g. /target/vash-poc.js) and "
-            "`cd /target && node vash-poc.js` — natural resolution, but it "
-            "writes into the target; (3) `npm ls <dep>` / "
+            "dir will NOT see /target/node_modules. /target is mounted "
+            "READ-ONLY, so you cannot simply drop the PoC inside it. In order: "
+            "(1) `require('/target/<entry>')` by absolute path and run with "
+            "`NODE_PATH=/target/node_modules node poc.js`; (2) if the target's "
+            "own relative imports break under (1), copy the tree out — "
+            "`cp -a /target /tmp/vashtgt && cp poc.js /tmp/vashtgt/ && "
+            "cd /tmp/vashtgt && node poc.js` — which gives natural resolution "
+            "without writing to the read-only mount; (3) `npm ls <dep>` / "
             "`ls /target/node_modules` first to confirm the dependency is "
             "actually installed. If node_modules is missing, provisioning did "
-            "not complete: say so rather than PoC-ing against a stub."
+            "not complete: say so rather than PoC-ing against a stub. Prefer "
+            "CommonJS (`require`) in the PoC — the observer's `--require` "
+            "preload patches builtins before the entry module loads, and a "
+            "CJS PoC keeps that interception unambiguous."
         ),
     ),
     "typescript": Runtime(
@@ -338,22 +358,31 @@ RUNTIMES: dict[str, Runtime] = {
     "go": Runtime(
         language="go",
         poc_filename="poc.go",
-        compile_cmd=None,
-        run_cmd="go run poc.go",
+        # COMPILE FIRST, then run the produced binary. `go run` would compile
+        # inside the traced process, and the toolchain's own execve/openat then
+        # satisfy the strace evidence markers unconditionally — every Go PoC
+        # would "prove" process spawn whether or not the sink ever fired.
+        # Building first means the trace covers ONLY the PoC's own behaviour.
+        compile_cmd="go build -o vash_poc ./vashpoc",
+        run_cmd="./vash_poc",
         observer=STRACE_OBSERVER,
         deps_hint=(
-            "Module context is everything: `go run` resolves imports against "
-            "the go.mod of the directory it runs in, so a poc.go in the "
-            "scratch dir cannot import the target's packages. Preferred: put "
-            "the PoC INSIDE the target module — `mkdir -p /target/vashpoc && "
-            "cp poc.go /target/vashpoc/ && cd /target && go run ./vashpoc` "
-            "(package main) — which reuses the module's resolved, already "
-            "downloaded dependencies. Alternative that keeps the target tree "
-            "clean: `go mod init vashpoc && go mod edit "
-            "-replace <target/module>=/target && go mod tidy`, but `tidy` "
-            "wants the network, so prefer the in-module form in an offline "
-            "container. `go env GOFLAGS GOMODCACHE` and "
-            "`head -1 /target/go.mod` tell you the module path to import."
+            "Module context is everything: Go resolves imports against the "
+            "go.mod of the directory it builds in, so a poc.go in the scratch "
+            "dir cannot import the target's packages. /target is mounted "
+            "READ-ONLY, so do NOT try to mkdir inside it — copy the module out "
+            "first:\n"
+            "  cp -a /target /tmp/vashtgt && mkdir -p /tmp/vashtgt/vashpoc && "
+            "cp poc.go /tmp/vashtgt/vashpoc/ && cd /tmp/vashtgt && "
+            "go build -o vash_poc ./vashpoc && ./vash_poc\n"
+            "That reuses the module's already-downloaded dependencies (the "
+            "module cache is outside /target) and needs no network. Declare "
+            "`package main` in poc.go. `head -1 /target/go.mod` gives the "
+            "module path to import; `go env GOMODCACHE GOFLAGS` shows the "
+            "cache. Avoid `go mod tidy` — it wants the network. Build and run "
+            "as two steps: it keeps the observer's trace clean and it "
+            "separates a COMPILE failure (your PoC is wrong) from a RUNTIME "
+            "result (the finding is real or not)."
         ),
     ),
     "csharp": Runtime(
@@ -367,7 +396,9 @@ RUNTIMES: dict[str, Runtime] = {
         run_cmd="dotnet run --project vashpoc -c Release --no-build --nologo",
         observer=None,
         deps_hint=(
-            "Set TARGET_CSPROJ first: "
+            "/target is mounted READ-ONLY: build the scratch project in the "
+            "scratch dir (as compile_cmd does) or under /tmp — never inside "
+            "/target, which fails with EROFS. Set TARGET_CSPROJ first: "
             "`TARGET_CSPROJ=$(find /target -name '*.csproj' | head -1)`; the "
             "project reference is what puts the target's own types on the "
             "compile path. `dotnet new`/`dotnet add reference` trigger a NuGet "
@@ -397,25 +428,29 @@ def runtime_for(languages: list[str],
                 project_env: dict | None = None) -> Runtime | None:
     """Pick the Runtime for a Hunt task, or None when nothing matches.
 
-    `project_env` is Phase 2's `ProvisionResult.agent_summary()` (what the
-    agent already sees as `project_environment`). Its `primary_language` is
-    repo-wide evidence — manifests and file counts across the whole tree — so
-    it outranks the per-task, file-extension-derived `languages` list, which
-    can name a single incidental `.js` in a Java repo. When it names a
-    language with no Runtime we fall through to the task's own list rather
-    than giving up.
+    The TASK's own languages win. They come from `detect_languages(
+    task.target_files)` — the actual files this hunt is about, and the file the
+    sink lives in is the file the PoC must exploit. Letting the repo-wide
+    `primary_language` outrank them handed a Hunt task that explicitly targets a
+    `.java` sink in a Python-majority polyglot repo the Python recipe: `poc.py`,
+    `python3`, and an audit hook that can never see a JVM.
+
+    `project_env` (Phase 2's `ProvisionResult.agent_summary()`, which the agent
+    already sees as `project_environment`) is the FALLBACK: repo-wide evidence
+    for when the task's own files say nothing useful — a task scoped to a
+    template, a config file, or a language Phase 3 does not cover.
 
     Returning None is a normal outcome (COBOL, templates, a language Phase 3
     does not cover). Callers must degrade to a static, unexecuted PoC.
     """
-    if project_env:
-        primary = project_env.get("primary_language")
-        if primary and primary in RUNTIMES:
-            return RUNTIMES[primary]
     for lang in languages or ():
         rt = RUNTIMES.get(lang)
         if rt is not None:
             return rt
+    if project_env:
+        primary = project_env.get("primary_language")
+        if primary and primary in RUNTIMES:
+            return RUNTIMES[primary]
     return None
 
 
@@ -436,6 +471,12 @@ def materialize_observer(rt: Runtime, scratch_dir: Path) -> list[Path]:
     scratch_dir = Path(scratch_dir)
     scratch_dir.mkdir(parents=True, exist_ok=True)
     dest = scratch_dir / name
+    # A scratch dir can be reused across resumes. If something left a SYMLINK
+    # at the asset path, both the exists() probe and the write would follow it
+    # and land outside scratch_dir — so replace a symlink rather than write
+    # through it. (`is_symlink` does not follow; `exists` does.)
+    if dest.is_symlink():
+        dest.unlink()
     if not dest.exists() or dest.read_text(encoding="utf-8") != body:
         dest.write_text(body, encoding="utf-8")
     return [dest]
@@ -463,10 +504,23 @@ def poc_execution_block(languages: list[str], project_env: dict | None,
     observer: dict | None = None
     if rt.observer is not None:
         files = materialize_observer(rt, scratch_dir) if materialize else []
+        # Resolve {observer} to the ABSOLUTE materialized path so the wrap
+        # survives the `cd /target` that deps_hint often calls for. Un-
+        # materialized (the text-only path) falls back to the bare asset name,
+        # which is all that can honestly be promised without a real scratch dir.
+        wrap = rt.observer.wrap
+        if "{observer}" in wrap:
+            if files:
+                asset_path = str(files[0].resolve())
+            elif rt.observer.asset:
+                asset_path = str(Path(scratch_dir) / Path(rt.observer.asset).name)
+            else:
+                asset_path = ""
+            wrap = wrap.replace("{observer}", asset_path)
         observer = {
             "name": rt.observer.name,
             "kind": rt.observer.kind,
-            "wrap": rt.observer.wrap,
+            "wrap": wrap,
             "evidence_markers": list(rt.observer.evidence_markers),
             "available_check": rt.observer.available_check,
             "notes": rt.observer.notes,

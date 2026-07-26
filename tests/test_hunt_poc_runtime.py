@@ -139,12 +139,24 @@ async def test_javascript_task_gets_node_block_and_materialized_observer(
     assert str(asset) in block["observer"]["files"]
 
 
-async def test_project_env_primary_language_beats_file_extension(
+async def test_task_file_language_beats_repo_primary_language(
     tmp_path: Path, monkeypatch
 ) -> None:
-    # A single incidental .py file in a Go repo must not pick the Python
-    # runtime — Phase 2's repo-wide evidence outranks the per-task extensions.
+    # The sink is in gen.py, so the PoC must be Python even though the repo is
+    # majority Go. Letting the repo-wide primary language win handed a task
+    # targeting a .java sink in a Python repo `poc.py` + an audit hook that can
+    # never see a JVM.
     captured, _ = await _run(tmp_path, monkeypatch, target_files=["tools/gen.py"],
+                             execution_enabled=True,
+                             project_env={"primary_language": "go"})
+    assert captured[0]["poc_execution"]["language"] == "python"
+
+
+async def test_project_env_is_the_fallback_when_the_task_files_say_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured, _ = await _run(tmp_path, monkeypatch,
+                             target_files=["templates/page.jinja2"],
                              execution_enabled=True,
                              project_env={"primary_language": "go"})
     assert captured[0]["poc_execution"]["language"] == "go"

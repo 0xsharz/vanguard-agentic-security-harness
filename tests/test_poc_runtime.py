@@ -72,9 +72,21 @@ def test_runtime_for_skips_unsupported_and_takes_the_first_supported() -> None:
     assert runtime_for(["web-template", "rust", "go", "python"]).language == "go"
 
 
-def test_project_env_primary_language_wins_over_file_derived_list() -> None:
-    rt = runtime_for(["python"], {"primary_language": "java"})
+def test_the_tasks_own_language_beats_the_repo_wide_primary_language() -> None:
+    """The sink lives in the task's file, so that file's language is what the
+    PoC must exploit. Letting the repo-wide primary language win handed a task
+    targeting a .java sink in a Python-majority repo `poc.py` + an audit hook
+    that can never see a JVM."""
+    rt = runtime_for(["java"], {"primary_language": "python"})
     assert rt is not None and rt.language == "java"
+    rt = runtime_for(["python"], {"primary_language": "java"})
+    assert rt is not None and rt.language == "python"
+
+
+def test_project_env_is_the_fallback_when_the_task_says_nothing_usable() -> None:
+    # e.g. a task scoped to a template or a language Phase 3 does not cover
+    assert runtime_for(["web-template"], {"primary_language": "go"}).language == "go"
+    assert runtime_for([], {"primary_language": "java"}).language == "java"
 
 
 def test_project_env_without_a_usable_primary_language_falls_back() -> None:
@@ -103,14 +115,30 @@ def test_every_observer_is_well_formed() -> None:
         assert obs.notes.strip(), lang
 
 
-def test_every_wrap_is_a_usable_format_template() -> None:
+def test_every_wrap_is_a_usable_format_template(tmp_path) -> None:
     # The agent substitutes the run command into `wrap`; a stray brace (a JSON
     # literal, a shell ${} ) would raise instead of producing a command line.
+    # Checked on the RESOLVED wrap poc_execution_block emits, since {observer}
+    # is substituted there with the absolute materialized asset path.
     for lang, obs in _observers():
         rt = RUNTIMES[lang]
-        line = obs.wrap.format(cmd=rt.run_cmd)
+        block = poc_execution_block([lang], None, tmp_path, materialize=True)
+        wrap = block["observer"]["wrap"]
+        assert "{observer}" not in wrap, lang
+        line = wrap.format(cmd=rt.run_cmd)
         assert rt.run_cmd in line, lang
         assert "{cmd}" not in line, lang
+
+
+def test_asset_observers_are_wrapped_by_absolute_path(tmp_path) -> None:
+    """A relative asset name (or $PWD) breaks the moment the agent follows
+    deps_hint and `cd /target` — node/python abort at startup having never run
+    the PoC, which reads as 'no evidence'."""
+    for lang in ("python", "javascript"):
+        block = poc_execution_block([lang], None, tmp_path, materialize=True)
+        wrap = block["observer"]["wrap"]
+        assert str(tmp_path) in wrap, lang
+        assert "$PWD" not in wrap, lang
 
 
 def test_observer_wraps_read_evidence_back_even_when_the_poc_fails() -> None:
@@ -249,8 +277,10 @@ def test_block_with_materialize_writes_the_asset(tmp_path) -> None:
         assert Path(f).parent == scratch
 
 
-def test_block_honours_project_env_primary_language(tmp_path) -> None:
+def test_block_prefers_the_tasks_language_and_falls_back_to_project_env(tmp_path) -> None:
     block = poc_execution_block(["python"], {"primary_language": "go"}, tmp_path)
+    assert block["language"] == "python"
+    block = poc_execution_block(["web-template"], {"primary_language": "go"}, tmp_path)
     assert block["language"] == "go"
 
 
@@ -336,3 +366,81 @@ def test_node_observer_asset_is_real_and_instruments_the_right_modules() -> None
 
 def test_javascript_and_typescript_share_the_node_observer() -> None:
     assert RUNTIMES["typescript"].observer is RUNTIMES["javascript"].observer
+
+
+def test_hook_applies_a_leading_env_assignment_and_still_runs_the_poc(tmp_path) -> None:
+    """The python deps_hint documents `PYTHONPATH=/target python3 poc.py`. The
+    shell only honours NAME=VALUE at the START of a command, so once that command
+    is spliced after `python3 <hook>` the assignment arrives as a plain argv
+    token. Before the fix the wrapper treated it as the script name and exited 2
+    WITHOUT RUNNING THE POC — which downstream reads as 'the observer saw
+    nothing', i.e. a real finding quietly loses its proof."""
+    libdir = tmp_path / "libdir"
+    libdir.mkdir()
+    (libdir / "vash_target_mod.py").write_text(
+        "def pwn():\n"
+        "    import subprocess\n"
+        "    subprocess.run(['/bin/echo', 'sink'], capture_output=True)\n"
+        "    return 'ok'\n"
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    materialize_observer(RUNTIMES["python"], scratch)
+    (scratch / "poc.py").write_text(
+        "import vash_target_mod\nprint('RESULT:', vash_target_mod.pwn())\n"
+    )
+    p = subprocess.run(
+        [sys.executable, str(scratch / "vash_audit_hook.py"),
+         f"PYTHONPATH={libdir}", sys.executable, str(scratch / "poc.py")],
+        cwd=scratch, capture_output=True, text=True, timeout=120,
+    )
+    out = p.stdout + p.stderr
+    assert p.returncode == 0, out
+    assert "RESULT: ok" in p.stdout            # the PoC really ran
+    assert "hook-armed" in out                 # ...with the hook armed
+    assert "audit:subprocess.Popen" in out     # ...and the sink was observed
+    assert f"env PYTHONPATH={libdir}" in out   # ...and the assignment was applied
+
+
+def test_hook_env_assignment_reaches_sys_path_not_just_environ(tmp_path) -> None:
+    """os.environ alone is too late — sys.path was already built from the
+    inherited environment before the wrapper started."""
+    libdir = tmp_path / "lib2"
+    libdir.mkdir()
+    (libdir / "vash_only_here.py").write_text("VALUE = 'imported-from-pythonpath'\n")
+    scratch = tmp_path / "s2"
+    scratch.mkdir()
+    materialize_observer(RUNTIMES["python"], scratch)
+    (scratch / "poc.py").write_text(
+        "import vash_only_here\nprint('GOT:', vash_only_here.VALUE)\n"
+    )
+    p = subprocess.run(
+        [sys.executable, str(scratch / "vash_audit_hook.py"),
+         f"PYTHONPATH={libdir}", str(scratch / "poc.py")],
+        cwd=scratch, capture_output=True, text=True, timeout=120,
+    )
+    assert "GOT: imported-from-pythonpath" in p.stdout, p.stdout + p.stderr
+
+
+def test_no_recipe_tells_the_agent_to_write_into_the_read_only_target() -> None:
+    """/target is mounted read-only in every documented invocation, so a recipe
+    that writes there fails with EROFS before the PoC ever links against the
+    target."""
+    for lang, rt in RUNTIMES.items():
+        for field in (rt.compile_cmd or "", rt.run_cmd, rt.deps_hint):
+            for bad in ("mkdir -p /target", "mkdir /target", "cp poc", "> /target/"):
+                if bad == "cp poc":
+                    assert "cp poc.go /target" not in field, lang
+                    assert "cp poc.js /target" not in field, lang
+                else:
+                    assert bad not in field, f"{lang}: {bad!r} writes to read-only /target"
+
+
+def test_go_compiles_before_tracing_so_the_toolchain_is_not_the_evidence() -> None:
+    """`strace go run` traces the COMPILER: its execve/openat satisfy the
+    evidence markers unconditionally, so every Go PoC would 'prove' process
+    spawn whether or not the sink fired."""
+    go = RUNTIMES["go"]
+    assert go.compile_cmd and "go build" in go.compile_cmd
+    assert "go run" not in go.run_cmd
+    assert go.run_cmd.strip().startswith("./")
