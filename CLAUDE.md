@@ -64,11 +64,28 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
   - **Honesty rules (tested, load-bearing)**: an observer is corroboration NEVER a verdict; and a missing
     **toolchain** is not a failed exploit — the pre-existing "drop the finding" rule would otherwise have
     silently deleted real findings on every Java target.
-  - **NEXT**: languages one at a time (user directive) — Node → Java → Go → C#. Known-open from adversarial
-    review: node `--require` misses **ESM**; node wrap hardcodes `$PWD`; python wrap can't carry a
-    `PYTHONPATH=` prefix; `runtime_for` lets repo primary_language outrank a task's own file language; Go
-    strace markers are satisfied by `go run` itself (false proof); `/target` is read-only so Go/C# "write into
-    the module" recipes hit EROFS.
+  - **ALL SIX REVIEW BUGS FIXED** (`0b9efd6`): observer path now absolute (`{observer}` substituted by
+    `poc_execution_block`) so a `cd /target` can't break it; `runtime_for` now prefers the TASK's own file
+    language (project_env is fallback); the python hook applies leading `NAME=VALUE` argv tokens (its own
+    deps_hint documents `PYTHONPATH=/target python3 poc.py`, which used to exit 2 without running the PoC);
+    Go compiles first and traces only the built binary (tracing `go run` made the COMPILER satisfy the
+    markers → every Go PoC "proved" process spawn); no recipe writes into read-only `/target`;
+    `materialize_observer` no longer follows symlinks.
+  - **ATTRIBUTION** (`9aee06d`) — the design risk I flagged before building observers: a marker alone only
+    says "a process spawned", which innocent code does too; read as proof it yields CONFIDENT false
+    positives. Every marker now carries `<- from file:line` (Java gets it free from JFR's stackTrace).
+    Interpreter/stdlib frames skipped (the nearest frame to `subprocess.run` is always
+    `subprocess.py:_execute_child` — useless); the PoC is deliberately NOT skipped, because attribution to
+    the PoC means the PoC hit the sink directly and proves NOTHING about the target. Prompt teaches this.
+  - **ALL 4 OBSERVERS VERIFIED against real targets**: python audit-hook; node preload (**ESM works** — my
+    and the reviewer's ESM concern was empirically WRONG: `--require` runs before ESM bindings exist);
+    java JFR (**best evidence of all** — stackTrace names `ReportService.buildReport line 10`); go strace
+    (needed BOTH `strace` installed in the scan image AND `--cap-add=SYS_PTRACE`, now in run-in-docker.sh).
+    C# ships no observer, honestly.
+  - **LIVE RUNS**: `vulnpy1` py 5 delivered all poc=1 · `nodecjs1` node CWE-78 critical poc=1 with
+    `child_process.execSync` evidence (one PoC went end-to-end through the HTTP server), $5.32/14m.
+  - **NEXT**: finish Java + Go live runs; C# target exists (`vulntargets/vuln-csharp`) but no scan image yet
+    (dotnet SDK is large). Rebuild scan images to pick up attribution + strace before further runs.
 - C/C++ deferred entirely per user.
 
 ## How to run (Docker, the real way)
