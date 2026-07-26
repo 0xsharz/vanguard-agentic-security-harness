@@ -268,3 +268,20 @@ def test_result_is_json_serialisable(tmp_path):
 ])
 def test_image_tags_are_docker_legal(tmp_path, name, expected):
     assert image_tag_for(tmp_path / name) == expected
+
+
+def test_inside_a_scan_image_provisioning_reports_preprovisioned(tmp_path, monkeypatch):
+    """Inside vash-scan-<target> the toolchain and the target's dependencies are
+    present in THIS container. Reporting "planned" there tells the hunter the
+    opposite of the truth and makes it distrust deps_hint."""
+    monkeypatch.setenv("VASH_SCAN_IMAGE", "vash-env-acme:latest")
+    r = provision_environment(_py_repo(tmp_path), client=FakeDocker())
+    assert r.status == "preprovisioned"
+    assert any("already installed" in n for n in r.notes)
+    assert r.agent_summary()["provisioning_status"] == "preprovisioned"
+
+
+def test_outside_a_scan_image_it_still_reports_planned(tmp_path, monkeypatch):
+    monkeypatch.delenv("VASH_SCAN_IMAGE", raising=False)
+    r = provision_environment(_py_repo(tmp_path), client=FakeDocker())
+    assert r.status == "planned"

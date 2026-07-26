@@ -20,6 +20,7 @@ client. No test in the suite runs Docker.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -170,7 +171,9 @@ class VerifyResult:
 
 @dataclass
 class ProvisionResult:
-    # planned : recipe rendered, no Docker asked for (the default `vash run`)
+    # planned        : recipe rendered, no Docker asked for (the default `vash run`)
+    # preprovisioned : already running inside the target's scan image — the
+    #                  toolchain and the target's deps are present in THIS container
     # built   : image exists
     # failed  : Docker tried and the repair ladder was exhausted
     # skipped : nothing to build (no known ecosystem / Docker unavailable)
@@ -309,6 +312,19 @@ def provision_environment(
     result.dockerfile = dockerfile
 
     if not build:
+        # Already running inside the target's scan image (vash-scan-<target>):
+        # the toolchain and the target's dependencies are present RIGHT HERE, so
+        # reporting "planned" would tell the hunter the opposite of the truth
+        # and make it distrust deps_hint's "just import the target".
+        preprovisioned = os.environ.get("VASH_SCAN_IMAGE", "").strip()
+        if preprovisioned:
+            result.status = "preprovisioned"
+            result.notes.append(
+                f"running inside the target's scan image ({preprovisioned}) — "
+                "the target's toolchain and dependencies are already installed "
+                "in this container; PoCs can use them directly"
+            )
+            return result
         result.status = "planned"
         result.notes.append(
             "recipe rendered only — no image built "

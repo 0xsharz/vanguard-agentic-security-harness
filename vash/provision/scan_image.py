@@ -137,6 +137,12 @@ WORKDIR /app
 # own interpreter imported it fine). VASH is invoked by absolute path so that
 # `python3`, `node`, `java`, `go` ... all remain the TARGET's toolchain.
 ENV VASH_SANDBOX=1
+# Tells the running scan that it is executing INSIDE the target's provisioned
+# environment — the toolchain and the target's dependencies are already present.
+# Without this the pipeline reports provisioning as merely "planned", and the
+# hunter cannot tell whether deps_hint's "the target is installed, just import
+# it" is actually true here.
+ENV VASH_SCAN_IMAGE={base_image}
 ENTRYPOINT ["{VENV}/bin/vash"]
 CMD ["--help"]
 """
