@@ -112,9 +112,28 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
     Debian bases (node/golang) have a python3.11 whose `venv` is broken → scan-image probe ATTEMPTS a venv
     then falls back to uv; C# `find -name '*.dll'` hits `obj/**/refint` reference assemblies →
     `BadImageFormatException` at run time.
-  - **NEXT after live runs**: consider rebuilding py/node scan images to pick up attribution; a real CVE
-    benchmark re-run (dmcg 5/11) has NOT been done since Phase 2 added `project_environment` to prompts —
-    unmeasured, and the only open risk to the published recall number.
+  - **REAL-WORLD BLIND TEST — js-yaml 4.2.0 (2026-07-26)**: scanned blind (shallow clone at the affected
+    tag so recon could not read the 4.3.0 fix; no scope-notes, no hints). **FOUND CVE-2026-59869**
+    (GHSA-52cp-r559-cp3m, merge-key chains → O(N²)) independently deriving the same formula and measuring
+    the same threshold the advisory quotes (N=4000 → 938ms), at `lib/loader.js:373` = `mergeMappings()`,
+    proven by execution incl. a process-killing OOM from 680KB. Of js-yaml's 9 advisories only that ONE
+    affects 4.2.0 → **1/1 on the applicable set**. 35 findings raised → 16 rejected by validate → 15
+    delivered, all poc_succeeded=1. $61.59 (inflated by 3 budget-abort/resume cycles).
+    **Genuinely new + still unpatched: `!!omap` quadratic DoS in the 4.x line** (`lib/type/omap.js`
+    `objectKeys.indexOf()` in a loop). CVE-2026-59870 fixed this in 5.2.1 via a `Set`; the fix was NEVER
+    backported — CONFIRMED by running it on 4.3.0 (58→167→659→2613ms, 4× per doubling). That is the one
+    finding worth reporting upstream. A claimed "patch bypass" of CVE-2026-53550 was RETRACTED after
+    testing 4.3.0: `maxTotalMergeKeys` closes it. Lesson: never report scanner output without re-verifying
+    against the CURRENT release — 15 findings reduced to 1 defensible report.
+  - **Scanner defects this real run exposed (all fixed)**: failed hunt tasks were invisible in the report
+    (`_attach_coverage` now emits tasks_failed/tasks_incomplete + a caveat, and markdown prints it);
+    unclassifiable API errors burned the full retry ladder (~18 min/run) — `UnclassifiedAgentError` now
+    gets ONE retry; and the observer was offered to 75 tasks and used by NONE, with no record either way
+    (prompt now requires a one-line observer decision in poc.notes). Common thread: **silence looked like
+    success**.
+  - **NEXT**: scan images are stale — rebuild before the next run to pick up attribution + these fixes.
+    A real CVE benchmark re-run (dmcg 5/11) has STILL NOT been done since Phase 2 added
+    `project_environment` to prompts — unmeasured, and the only open risk to the published recall number.
 - C/C++ deferred entirely per user.
 
 ## How to run (Docker, the real way)
