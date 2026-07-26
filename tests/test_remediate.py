@@ -468,3 +468,85 @@ async def test_run_remediate_fail_closed_when_policy_missing(tmp_path: Path, mon
 def test_cli_registers_remediate_command() -> None:
     from vash.cli import main
     assert "remediate" in main.commands
+
+
+# --- generated patches must actually apply --------------------------------
+
+def test_hunk_counts_are_recomputed_from_the_body() -> None:
+    """An LLM writing a unified diff gets the header line counts wrong often
+    enough to matter: on a real 7-finding run, 4 patches were rejected by
+    `git apply` as "corrupt patch", and every one had a header that disagreed
+    with the body it introduced. The counts are fully determined by the body,
+    so they are recomputed rather than trusted."""
+    from vash.stages.remediate import _normalize_hunk_counts
+    bad = (
+        "--- a/app/notes.py\n"
+        "+++ b/app/notes.py\n"
+        "@@ -13,6 +13,12 @@\n"          # says 6 old lines; body has 5
+        " \n"
+        " def read_note(path):\n"
+        '     """doc"""\n'
+        "-    with open(os.path.join(NOTES_DIR, path)) as fh:\n"
+        "-        return fh.read()\n"
+        "+    target = os.path.realpath(os.path.join(NOTES_DIR, path))\n"
+        "+    with open(target) as fh:\n"
+        "+        return fh.read()\n"
+    )
+    fixed, corrected = _normalize_hunk_counts(bad)
+    assert corrected == 1
+    assert "@@ -13,5 +13,6 @@" in fixed
+    assert "realpath" in fixed                    # body untouched
+
+
+def test_correct_hunk_counts_are_left_alone() -> None:
+    from vash.stages.remediate import _normalize_hunk_counts
+    good = (
+        "--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+        " y = 3\n"
+    )
+    fixed, corrected = _normalize_hunk_counts(good)
+    assert corrected == 0
+    assert fixed.strip() == good.strip()
+
+
+def test_start_lines_are_never_rewritten() -> None:
+    """Counts are derivable from the body; the START line is not — it encodes
+    where the hunk applies. Guessing it would silently mangle a patch."""
+    from vash.stages.remediate import _normalize_hunk_counts
+    fixed, _ = _normalize_hunk_counts(
+        "--- a/a.py\n+++ b/a.py\n@@ -42,9 +99,9 @@\n x\n")
+    assert "@@ -42,1 +99,1 @@" in fixed
+
+
+def test_normalisation_never_loses_a_patch_on_weird_input() -> None:
+    from vash.stages.remediate import _normalize_hunk_counts
+    weird = "not a diff at all\njust prose\n"
+    fixed, corrected = _normalize_hunk_counts(weird)
+    assert fixed == weird and corrected == 0
+
+
+def test_apply_check_reports_a_patch_that_does_not_apply(tmp_path) -> None:
+    """A patch that cannot be applied is worse than no patch — it looks like a
+    fix in the report. It must be reported as failing."""
+    import subprocess
+    from vash.stages.remediate import _check_patch_applies
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "a.py").write_text("x = 1\ny = 2\n")
+    good = "--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n-x = 1\n+x = 99\n y = 2\n"
+    bad = "--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n-NOPE = 1\n+x = 99\n y = 2\n"
+    assert _check_patch_applies(good, tmp_path)[0] is True
+    assert _check_patch_applies(bad, tmp_path)[0] is False
+    assert _check_patch_applies("", tmp_path)[0] is None      # nothing to check
+
+
+def test_apply_check_reports_a_missing_target_file(tmp_path) -> None:
+    """`git apply` works outside a git repo too, so a patch against a file that
+    is not there is reported as NOT applying, with the reason — not silently
+    passed and not crashed on."""
+    from vash.stages.remediate import _check_patch_applies
+    applies, detail = _check_patch_applies(
+        "--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,1 @@\n-x\n+y\n", tmp_path)
+    assert applies is False
+    assert "a.py" in detail

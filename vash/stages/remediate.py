@@ -36,6 +36,8 @@ the deterministic guidance-only path (no LLM call).
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import logging
 from pathlib import Path
 
@@ -268,12 +270,109 @@ def _test_ext(test_path: str | None) -> str:
     return ".py"
 
 
+# A unified-diff hunk header declares how many lines each side spans. An LLM
+# writing a diff by hand gets those counts wrong often enough to matter: on a
+# real 7-finding run, 4 patches were rejected by `git apply` with "corrupt
+# patch", and in every case the header disagreed with the body it introduced.
+# The counts are not a judgement call — they are fully determined by the hunk
+# body — so they are recomputed here rather than trusted.
+_HUNK_HDR = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def _normalize_hunk_counts(diff: str) -> tuple[str, int]:
+    """Rewrite each hunk header's line counts to match its body.
+
+    Returns (normalized_diff, hunks_corrected). Start line numbers are left
+    alone: those encode WHERE the hunk applies and cannot be re-derived from the
+    diff. Any structural surprise leaves the diff untouched — an unapplied patch
+    is recoverable, a silently mangled one is not.
+    """
+    try:
+        lines = diff.splitlines()
+        out: list[str] = []
+        corrected = 0
+        i = 0
+        while i < len(lines):
+            m = _HUNK_HDR.match(lines[i])
+            if not m:
+                out.append(lines[i])
+                i += 1
+                continue
+            old_start, old_n, new_start, new_n, tail = m.groups()
+            body: list[str] = []
+            j = i + 1
+            old = new = 0
+            while j < len(lines):
+                c = lines[j][:1]
+                if _HUNK_HDR.match(lines[j]) or lines[j].startswith(("--- ", "+++ ", "diff ")):
+                    break
+                if c == " ":
+                    old += 1
+                    new += 1
+                elif c == "-":
+                    old += 1
+                elif c == "+":
+                    new += 1
+                elif c == "\\":          # "\ No newline at end of file"
+                    pass
+                elif lines[j] == "":
+                    old += 1              # a bare empty line is context
+                    new += 1
+                else:
+                    break
+                body.append(lines[j])
+                j += 1
+            if (int(old_n or 1), int(new_n or 1)) != (old, new):
+                corrected += 1
+            out.append(f"@@ -{old_start},{old} +{new_start},{new} @@{tail}")
+            out.extend(body)
+            i = j
+        return "\n".join(out) + ("\n" if diff.endswith("\n") else ""), corrected
+    except Exception:  # never let normalisation lose a patch
+        return diff, 0
+
+
+def _check_patch_applies(diff: str, repo_path: Path) -> tuple[bool | None, str]:
+    """Does this diff actually apply to the target tree?
+
+    Returns (applies, detail); applies is None when it could not be determined
+    (no git, not a work tree). Uses `git apply --check`, which only reads.
+
+    This exists because a patch that cannot be applied is worse than no patch:
+    it looks like a fix in the report. On a real run 4 of 7 patches were rejected
+    by git — the hunk headers were repairable, but one had context lines that
+    simply did not match the file, and nothing in the output said so.
+    """
+    if not diff.strip():
+        return None, "no diff"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "apply", "--check", "-"],
+            input=diff, text=True, capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"could not verify ({type(e).__name__})"
+    if proc.returncode == 0:
+        return True, "applies cleanly"
+    err = (proc.stderr or "").strip().splitlines()
+    detail = err[0] if err else f"git apply exited {proc.returncode}"
+    if "not a git repository" in detail.lower():
+        return None, "target is not a git work tree — could not verify"
+    return False, detail
+
+
 def _write_patch_and_test(record: dict, patches_dir: Path, tests_dir: Path) -> None:
     """Persist a record's diff + test to disk, REDACTED. No file is written for
     an empty diff/test (so denied/guidance findings produce no diff file)."""
     fid = record["finding_id"]
     diff = (record.get("patch_diff") or "")
     if diff.strip():
+        diff, corrected = _normalize_hunk_counts(diff)
+        if corrected:
+            record["patch_diff"] = diff
+            record["hunk_headers_corrected"] = corrected
+            log.info("[remediate] %s: repaired %d hunk header(s) whose line "
+                     "counts disagreed with the body", fid, corrected)
         (patches_dir / f"{fid}.diff").write_text(redact(diff))
     test = (record.get("security_test") or "")
     if test.strip():
@@ -294,6 +393,16 @@ def _render_one(lines: list[str], f: Finding, record: dict) -> None:
     lines.append(f"- **Location**: `{f.file}:{f.line_start}-{f.line_end}`  ")
     lines.append(f"- **Severity**: {f.severity}")
     lines.append(f"- **needs_verification**: {record.get('needs_verification', True)}")
+    # Whether the diff actually applies. Absent = could not be determined.
+    applies = record.get("applies_cleanly")
+    if applies is True:
+        lines.append("- **applies cleanly**: yes (`git apply --check`)")
+    elif applies is False:
+        lines.append(f"- **applies cleanly**: **NO** — {record.get('apply_check', 'rejected')}. "
+                     "Treat the diff as guidance and apply the change by hand.")
+    if record.get("hunk_headers_corrected"):
+        lines.append(f"- _note: {record['hunk_headers_corrected']} hunk header(s) had "
+                     "line counts that disagreed with the body; recomputed before writing._")
     lines.append("")
     if record.get("root_cause"):
         lines.append(f"**Root cause**: {record['root_cause']}")
@@ -447,6 +556,16 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
     # Persist per-finding diff + test (redacted). Guidance/cannot_fix -> no diff.
     for _f, record in pairs:
         _write_patch_and_test(record, patches_dir, tests_dir)
+        # A patch that does not apply still LOOKS like a fix in the report, so
+        # say which ones do. Read-only, fail-soft: unknown stays unknown.
+        applies, detail = _check_patch_applies(
+            record.get("patch_diff") or "", ctx.repo_path)
+        if applies is not None:
+            record["applies_cleanly"] = applies
+            record["apply_check"] = detail
+            if not applies:
+                log.warning("[%s] remediate: patch for %s does NOT apply — %s",
+                            ctx.run_id, record.get("finding_id"), detail)
 
     counts = {"patched": 0, "guidance_only": 0, "cannot_fix": 0}
     for _f, record in pairs:

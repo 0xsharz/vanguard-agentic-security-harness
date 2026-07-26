@@ -125,7 +125,9 @@ vash validate  --run-id my-first-scan
 ## 📸 See it run
 
 A 38-line target with two real bugs — a shell command built by string
-concatenation, and a path joined straight onto user input:
+concatenation, and a path joined straight onto user input. It lives in
+[`examples/vulnerable-demo/`](examples/vulnerable-demo) so you can reproduce
+this run yourself:
 
 ```python
 # app/notes.py
@@ -141,7 +143,7 @@ def read_note(path):
 **1 — build the target's environment**, so an exploit has a real runtime to run in:
 
 ```bash
-vash provision --repo ./demo-app --scan-image
+vash provision --repo ./examples/vulnerable-demo --scan-image
 ```
 
 <p align="center"><img src="docs/screenshots/provision.svg" alt="vash provision fingerprints the repo, renders a Dockerfile, builds and verifies the image, then layers VASH on top of it" width="100%"></p>
@@ -150,7 +152,7 @@ vash provision --repo ./demo-app --scan-image
 
 ```bash
 docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN \
-  -v ./demo-app:/target:ro vash-scan-demo-app:latest \
+  -v ./examples/vulnerable-demo:/target:ro vash-scan-vulnerable-demo:latest \
   run --repo /target --dynamic-validation
 ```
 
