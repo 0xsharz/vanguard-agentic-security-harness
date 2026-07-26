@@ -45,6 +45,10 @@ class ProjectFingerprint:
     languages: list[str] = field(default_factory=list)
     build_systems: list[str] = field(default_factory=list)
     version_pins: dict[str, str] = field(default_factory=dict)
+    # Minimum versions (from a range spec such as `">= 16.0.0"`). The renderer
+    # takes max(floor, its own default) — a floor must never downgrade a
+    # modern default, which is how a `>=16` repo got built on node:16.
+    version_floors: dict[str, str] = field(default_factory=dict)
     existing_recipes: list[str] = field(default_factory=list)
     primary_language: str | None = None
 
@@ -111,17 +115,52 @@ def _detect_recipes(repo_path: Path) -> list[str]:
     return sorted(set(found))
 
 
-def _detect_version_pins(repo_path: Path) -> dict[str, str]:
+# A range operator means the version is a FLOOR, not a pin. `engines: {"node":
+# ">= 16.0.0"}` says "16 or newer" — pinning the image to node:16 because of it
+# is how a repo whose .nvmrc says 24 and whose CI runs 20/22/24 ends up built on
+# an eight-year-old runtime (observed on graphql-code-generator).
+_RANGE_OPS = (">", "<", "^", "~", "*", "x", "||", " - ")
+
+
+def _spec_is_a_floor(spec: str) -> bool:
+    return any(op in spec for op in _RANGE_OPS)
+
+
+def _detect_version_pins(repo_path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Returns (exact_pins, floors).
+
+    Exact pins are honoured verbatim. Floors are minimums — the renderer takes
+    max(floor, its own default) so a modern default is never downgraded to a
+    project's stated minimum.
+    """
     pins: dict[str, str] = {}
+    floors: dict[str, str] = {}
+
+    # .nvmrc is an EXACT statement of the node version the project develops on,
+    # so it outranks the engines range.
+    nvmrc = repo_path / ".nvmrc"
+    if nvmrc.is_file():
+        try:
+            m = re.search(r"(\d+(?:\.\d+)*)",
+                          nvmrc.read_text(encoding="utf-8", errors="replace"))
+            if m:
+                pins["node"] = m.group(1)
+        except OSError:
+            pass
+
     pkg = repo_path / "package.json"
     if pkg.is_file():
         try:
             data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
             node = (data.get("engines") or {}).get("node")
             if node:
-                m = re.search(r"(\d+)", str(node))
+                spec = str(node)
+                m = re.search(r"(\d+)", spec)
                 if m:
-                    pins["node"] = m.group(1)
+                    if _spec_is_a_floor(spec):
+                        floors.setdefault("node", m.group(1))
+                    else:
+                        pins.setdefault("node", m.group(1))
         except (ValueError, OSError):
             pass
     gomod = repo_path / "go.mod"
@@ -143,7 +182,7 @@ def _detect_version_pins(repo_path: Path) -> dict[str, str]:
                     pins["python"] = m.group(1)
             except OSError:
                 pass
-    return pins
+    return pins, floors
 
 
 def fingerprint(repo_path: Path) -> ProjectFingerprint:
@@ -152,10 +191,12 @@ def fingerprint(repo_path: Path) -> ProjectFingerprint:
     # path (Stage 0), and a large target should not be traversed twice.
     files = list(_iter_files(repo_path))
     languages, primary = _detect_languages(files)
+    pins, floors = _detect_version_pins(repo_path)
     return ProjectFingerprint(
         languages=languages,
         build_systems=_detect_build_systems(files),
-        version_pins=_detect_version_pins(repo_path),
+        version_pins=pins,
+        version_floors=floors,
         existing_recipes=_detect_recipes(repo_path),
         primary_language=primary,
     )

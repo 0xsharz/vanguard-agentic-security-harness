@@ -3,6 +3,7 @@ recipe; otherwise emits a per-ecosystem template STRING. Text only — this
 module never runs `docker build` (`build.py` owns build/verify/repair)."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +46,35 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "install": "RUN npm ci || npm install",
         "build": "npm run build --if-present",
         "test": "npm test --if-present",
+        "deps": _NPM_DEPS_PROBE,
+    },
+    "pnpm": {
+        "base": "node:{ver}",
+        "default_ver": "20",
+        "ver_key": "node",
+        # `npm install` CANNOT resolve pnpm's `workspace:^` protocol, so a pnpm
+        # monorepo templated as npm installs nothing (observed on
+        # graphql-code-generator). corepack activates the exact pnpm pinned by
+        # the repo's packageManager field.
+        "install": (
+            "RUN corepack enable \\\n"
+            "    && (pnpm install --frozen-lockfile "
+            "|| pnpm install --no-frozen-lockfile || true)"
+        ),
+        "build": "pnpm -r --if-present run build",
+        "test": "pnpm -r --if-present run test",
+        "deps": _NPM_DEPS_PROBE,
+    },
+    "yarn": {
+        "base": "node:{ver}",
+        "default_ver": "20",
+        "ver_key": "node",
+        "install": (
+            "RUN corepack enable \\\n"
+            "    && (yarn install --immutable || yarn install || true)"
+        ),
+        "build": "yarn run build || true",
+        "test": "yarn run test || true",
         "deps": _NPM_DEPS_PROBE,
     },
     "maven": {
@@ -106,7 +136,11 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
 }
 
 # preference order when a repo declares several ecosystems.
-_PRIORITY = ["maven", "gradle", "npm", "go-modules", "dotnet", "pip", "poetry"]
+# pnpm/yarn before npm: all three are proven by a package.json, but the
+# lockfile-specific one is what the repo actually uses, and installing a pnpm
+# workspace with npm silently produces an empty node_modules.
+_PRIORITY = ["maven", "gradle", "pnpm", "yarn", "npm", "go-modules", "dotnet",
+             "pip", "poetry"]
 
 # ecosystem -> language it belongs to, so _pick_ecosystem can prefer the
 # ecosystem matching the repo's dominant language over one from a vendored
@@ -131,15 +165,43 @@ class RenderedRecipe:
     notes: list[str] = field(default_factory=list)
 
 
+# TypeScript ships through the JavaScript toolchain, so a TS-majority repo must
+# match npm/pnpm/yarn — otherwise the language check silently never fires and the
+# ecosystem falls back to raw priority order.
+_LANG_ALIASES = {"typescript": "javascript"}
+
+
 def _pick_ecosystem(fp: ProjectFingerprint) -> str | None:
     present = [bs for bs in _PRIORITY if bs in fp.build_systems]
     if not present:
         return None
-    if fp.primary_language:
+    primary = _LANG_ALIASES.get(fp.primary_language, fp.primary_language)
+    if primary:
         for bs in present:
-            if _ECOSYSTEM_LANG.get(bs) == fp.primary_language:
+            if _ECOSYSTEM_LANG.get(bs) == primary:
                 return bs
     return present[0]
+
+
+def _version_key(v: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", v)[:3]) or (0,)
+
+
+def _resolve_version(fp: ProjectFingerprint, t: dict) -> str:
+    """Exact pin wins; otherwise max(stated floor, our default).
+
+    A floor is a MINIMUM (`engines: {"node": ">= 16.0.0"}`). Treating it as a
+    pin builds the project on its oldest supported runtime — which is how a repo
+    whose .nvmrc says 24 got a node:16 image.
+    """
+    key, default = t["ver_key"], t["default_ver"]
+    exact = fp.version_pins.get(key)
+    if exact:
+        return exact
+    floor = getattr(fp, "version_floors", {}).get(key)
+    if floor and _version_key(floor) > _version_key(default):
+        return floor
+    return default
 
 
 def render_dockerfile(fp: ProjectFingerprint, repo_path: Path) -> RenderedRecipe:
@@ -155,7 +217,7 @@ def render_dockerfile(fp: ProjectFingerprint, repo_path: Path) -> RenderedRecipe
         return RenderedRecipe(source="none",
                               notes=["no known build system detected"])
     t = ECOSYSTEM_TEMPLATES[eco]
-    ver = fp.version_pins.get(t["ver_key"], t["default_ver"])
+    ver = _resolve_version(fp, t)
     base = t["base"].format(ver=ver)
     dockerfile = "\n".join([
         f"FROM {base}",

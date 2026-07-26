@@ -122,3 +122,66 @@ def test_npm_deps_probe_passes_when_node_modules_exists(tmp_path):
 def ECOSYSTEM_TEMPLATES_DEPS():
     from vash.provision.dockerfile import ECOSYSTEM_TEMPLATES
     return ECOSYSTEM_TEMPLATES["npm"]["deps"]
+
+
+# --- real-world monorepo shapes (found on graphql-code-generator) ------------
+
+def test_pnpm_workspace_is_not_templated_as_npm(tmp_path):
+    """`npm install` cannot resolve pnpm's `workspace:^` protocol, so a pnpm
+    monorepo templated as npm installs nothing at all."""
+    repo = _mk(tmp_path, {
+        "app.ts": "export const x = 1\n",
+        "package.json": '{"name":"root","packageManager":"pnpm@11.1.1"}',
+        "pnpm-lock.yaml": "lockfileVersion: 9\n",
+        "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+    })
+    fp = fingerprint(repo)
+    assert "pnpm" in fp.build_systems
+    r = render_dockerfile(fp, repo)
+    assert "pnpm install" in r.dockerfile
+    assert "corepack enable" in r.dockerfile      # honours packageManager
+    assert "npm ci" not in r.dockerfile
+
+
+def test_engines_range_is_a_floor_not_a_pin(tmp_path):
+    """`engines: {"node": ">= 16.0.0"}` means 16-or-newer. Pinning to 16 builds
+    the project on its oldest supported runtime."""
+    repo = _mk(tmp_path, {
+        "app.js": "1\n",
+        "package.json": '{"name":"x","engines":{"node":">= 16.0.0"}}',
+    })
+    fp = fingerprint(repo)
+    assert fp.version_floors.get("node") == "16"
+    assert "node" not in fp.version_pins
+    r = render_dockerfile(fp, repo)
+    assert "FROM node:20" in r.dockerfile        # the default, not the floor
+
+
+def test_a_floor_above_the_default_is_honoured(tmp_path):
+    repo = _mk(tmp_path, {
+        "app.js": "1\n",
+        "package.json": '{"name":"x","engines":{"node":">=22"}}',
+    })
+    r = render_dockerfile(fingerprint(repo), repo)
+    assert "FROM node:22" in r.dockerfile
+
+
+def test_nvmrc_is_an_exact_pin_and_outranks_the_engines_range(tmp_path):
+    repo = _mk(tmp_path, {
+        "app.js": "1\n",
+        ".nvmrc": "24\n",
+        "package.json": '{"name":"x","engines":{"node":">= 16.0.0"}}',
+    })
+    fp = fingerprint(repo)
+    assert fp.version_pins.get("node") == "24"
+    assert "FROM node:24" in render_dockerfile(fp, repo).dockerfile
+
+
+def test_typescript_repo_matches_the_javascript_ecosystem(tmp_path):
+    repo = _mk(tmp_path, {
+        "a.ts": "1\n", "b.ts": "2\n",
+        "package.json": "{}", "pnpm-lock.yaml": "lockfileVersion: 9\n",
+    })
+    fp = fingerprint(repo)
+    assert fp.primary_language == "typescript"
+    assert render_dockerfile(fp, repo).dockerfile.count("pnpm") >= 1
