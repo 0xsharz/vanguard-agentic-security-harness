@@ -332,9 +332,19 @@ RUNTIMES: dict[str, Runtime] = {
     "typescript": Runtime(
         language="typescript",
         poc_filename="poc.ts",
+        # Prefer a compiler that is already installed — a TS project almost
+        # always has typescript as a devDependency, and the scan container is
+        # OFFLINE, where `npx --yes` would try to fetch and fail. npx stays as
+        # the last resort rather than the default.
         compile_cmd=(
-            "npx --yes tsc poc.ts --outDir . --module commonjs --target es2020 "
-            "--skipLibCheck --esModuleInterop"
+            'TSC="$(command -v tsc 2>/dev/null)"; '
+            '[ -n "$TSC" ] || [ ! -x /target/node_modules/.bin/tsc ] || '
+            'TSC=/target/node_modules/.bin/tsc; '
+            '[ -n "$TSC" ] || [ ! -x ./node_modules/.bin/tsc ] || '
+            'TSC=./node_modules/.bin/tsc; '
+            '[ -n "$TSC" ] || TSC="npx --yes tsc"; '
+            '$TSC poc.ts --outDir . --module commonjs --target es2020 '
+            '--skipLibCheck --esModuleInterop'
         ),
         run_cmd="node poc.js",
         observer=NODE_PRELOAD,

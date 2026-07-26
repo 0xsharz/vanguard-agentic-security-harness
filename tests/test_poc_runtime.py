@@ -493,3 +493,23 @@ def test_attribution_names_the_poc_when_the_poc_bypasses_the_target(tmp_path) ->
     out = p.stdout + p.stderr
     line = next(ln for ln in out.splitlines() if "audit:subprocess.Popen" in ln)
     assert "poc.py:2" in line, line
+
+
+def test_typescript_prefers_an_installed_compiler_over_npx(tmp_path) -> None:
+    """The scan container is OFFLINE. `npx --yes tsc` would try to fetch and
+    fail, so a locally-installed compiler (typescript is nearly always a
+    devDependency of a TS project) must win."""
+    cmd = RUNTIMES["typescript"].compile_cmd
+    assert "command -v tsc" in cmd
+    assert "/target/node_modules/.bin/tsc" in cmd
+    assert cmd.index("command -v tsc") < cmd.index("npx --yes tsc")   # npx is last
+
+    # and the selection shell really picks the local one
+    binp = tmp_path / "node_modules" / ".bin"
+    binp.mkdir(parents=True)
+    tsc = binp / "tsc"
+    tsc.write_text('#!/bin/sh\necho "LOCAL-TSC $*"\n')
+    tsc.chmod(0o755)
+    p = subprocess.run(["sh", "-c", cmd], cwd=tmp_path, capture_output=True,
+                       text=True, timeout=60)
+    assert "LOCAL-TSC poc.ts" in p.stdout, p.stdout + p.stderr
