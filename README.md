@@ -35,7 +35,7 @@ vash run --repo ./my-project --dynamic-validation  # + sandboxed executed-PoC co
 ## 📖 Table of contents
 
 - [Why VASH](#-why-vash) · [Highlights](#-highlights) · [How it works](#-how-it-works) · [Install](#-install) · [Quickstart](#-quickstart)
-- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Honest by construction](#-honest-by-construction) · [Project structure](#-project-structure)
+- [See it run](#-see-it-run) · [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Honest by construction](#-honest-by-construction) · [Project structure](#-project-structure)
 - [Configuration & cost](#-configuration--cost) · [Results](#-results) · [License](#-license)
 
 ---
@@ -121,6 +121,61 @@ docker build -t vash:latest .
 vash remediate --run-id my-first-scan
 vash validate  --run-id my-first-scan
 ```
+
+## 📸 See it run
+
+A 38-line target with two real bugs — a shell command built by string
+concatenation, and a path joined straight onto user input:
+
+```python
+# app/notes.py
+def export_note(name):
+    cmd = "note2pdf --title " + name            # attacker controls `name`
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
+
+def read_note(path):
+    with open(os.path.join(NOTES_DIR, path)) as fh:   # attacker controls `path`
+        return fh.read()
+```
+
+**1 — build the target's environment**, so an exploit has a real runtime to run in:
+
+```bash
+vash provision --repo ./demo-app --scan-image
+```
+
+<p align="center"><img src="docs/screenshots/provision.svg" alt="vash provision fingerprints the repo, renders a Dockerfile, builds and verifies the image, then layers VASH on top of it" width="100%"></p>
+
+**2 — scan it, with exploits actually running** inside that environment:
+
+```bash
+docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN \
+  -v ./demo-app:/target:ro vash-scan-demo-app:latest \
+  run --repo /target --dynamic-validation
+```
+
+<p align="center"><img src="docs/screenshots/scan.svg" alt="The hunt stage dispatching narrowly-scoped tasks, each with a per-language PoC recipe and the python-audit-hook observer, followed by the validation feed confirming findings" width="100%"></p>
+
+Note `observer=python-audit-hook` on each task — that is the runtime instrumentation
+being attached before the exploit runs.
+
+**3 — the result.** Both planted bugs found and rated critical, plus five more the
+target genuinely has (no auth on the sink, unbounded reads, a routing bug), and two
+exploit chains:
+
+<p align="center"><img src="docs/screenshots/summary.svg" alt="Run summary table: 10 findings, all 10 confirmed by adversarial validation, 4 critical" width="100%"></p>
+
+| Delivered | | |
+|---|---|---|
+| `CWE-78` command injection | `app/notes.py:7` | critical |
+| `CWE-22` path traversal | `app/notes.py:14` | critical |
+| `CWE-306` missing authentication | `app/notes.py:7` | high |
+| `CWE-400` denial of service ×3 | `notes.py:9,16` · `server.py:20` | high / medium |
+| `CWE-697` routing logic error | `app/server.py:9` | medium |
+
+**Every one carries `poc_succeeded=true`** — an exploit was written, executed in the
+container, and observed. 22 minutes, $10.33.
+
 
 ## 🖥️ Commands
 
