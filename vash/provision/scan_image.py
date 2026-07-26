@@ -66,16 +66,26 @@ _VASH_PAYLOAD = [
     ("NOTICE THIRD_PARTY_LICENSES.md LICENSE", "./"),
 ]
 
-# Create VASH's venv. The provisioned base may be python:3.11-slim (python
-# present), node:20 or golang:1.22 (a system python3 that may be too old), or
-# maven:3.9-eclipse-temurin-21 (no python at all) — so probe, and fall back to
-# uv, which installs a private 3.11 without needing root or a distro package.
+# Create VASH's venv. The provisioned base may be python:3.11-slim (python +
+# working venv), node:20 or golang:1.22 (Debian: a python3.11 whose `venv` is
+# BROKEN until the separate python3-venv package is installed), or
+# maven:3.9-eclipse-temurin-21 (no python at all).
+#
+# The probe therefore ATTEMPTS A THROWAWAY VENV rather than merely checking the
+# version — observed on node:20, where `python3 -c 'sys.version_info >= (3,11)'`
+# passes and `python3 -m venv` then fails with "you need to install the
+# python3-venv package", taking the fast path straight into a build error.
+# uv is the universal fallback: it installs a private 3.11 with no distro
+# package and no root.
 _VENV_SETUP = f"""RUN set -eu; \\
     if command -v python3 >/dev/null 2>&1 \\
-       && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then \\
+       && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' \\
+       && python3 -m venv /tmp/vash-venv-probe >/dev/null 2>&1; then \\
+        rm -rf /tmp/vash-venv-probe; \\
         python3 -m venv {VENV}; \\
         {VENV}/bin/pip install --no-cache-dir -e /app; \\
     else \\
+        rm -rf /tmp/vash-venv-probe; \\
         curl -LsSf https://astral.sh/uv/install.sh | sh; \\
         export PATH="/root/.local/bin:$PATH"; \\
         uv python install 3.11; \\

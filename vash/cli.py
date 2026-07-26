@@ -339,6 +339,12 @@ def provision_cmd(repo: str, build: bool, tag: str | None, max_attempts: int,
                               "run --repo /target --dynamic-validation")
             else:
                 console.print(f"[red]scan image {scan.status}[/red]")
+                # Without the log the operator cannot act on the failure — the
+                # notes only say what was lost, not why.
+                if scan.log_tail:
+                    console.print("[dim]--- last lines of the build log ---[/dim]")
+                    console.print(escape(scan.log_tail[-1200:]),
+                                  markup=False, highlight=False)
 
     if out_path:
         payload = result.to_dict()

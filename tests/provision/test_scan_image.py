@@ -134,3 +134,15 @@ def test_result_is_json_serialisable(tmp_path):
 
 def client_note(result, fragment: str) -> bool:
     return any(fragment in n for n in result.notes)
+
+
+def test_venv_probe_actually_attempts_a_venv_not_just_a_version_check():
+    """Debian bases (node:20, golang:1.22) ship a python3.11 whose `venv` is
+    broken until python3-venv is installed. A version-only probe took the fast
+    path and the build died with 'you need to install the python3-venv
+    package' — observed on the real node target."""
+    df = render_scan_dockerfile("node:20")
+    assert "python3 -m venv /tmp/vash-venv-probe" in df
+    probe_at = df.index("/tmp/vash-venv-probe")
+    real_at = df.index(f"python3 -m venv {VENV}")
+    assert probe_at < real_at            # probe gates the real creation
