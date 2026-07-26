@@ -8,6 +8,7 @@ from typing import Awaitable, Callable
 
 from vash.graph_context import neighbors_for_files
 from vash.lang.hints import detect_languages, hints_for
+from vash.lang.poc_runtime import poc_execution_block
 from vash.runner import (
     AgentRunError,
     QuotaExhaustedError,
@@ -100,6 +101,41 @@ async def run_hunt(
             gc = neighbors_for_files(gq, task.target_files) if gq else {}
             if gc:
                 user_input["graph_context"] = gc
+            # Phase 3: the per-language PoC recipe + its runtime observer.
+            # Gated on ctx.execution_enabled — the SAME flag that gates Bash
+            # in run_agent() — because everything in the block only means
+            # something to an agent that can actually run it, and because
+            # materialize=True writes the observer helper into the scratch
+            # dir. On a bare static host the key stays absent and nothing is
+            # written, so a static run is byte-for-byte what it was before.
+            # Fail-open like the orchestrator's other synthesis steps: a
+            # registry bug degrades this task to the generic "write a PoC in
+            # the target language" instruction, it does not fail the hunt.
+            if ctx.execution_enabled:
+                try:
+                    poc_exec = poc_execution_block(
+                        languages, ctx.project_env, scratch, materialize=True,
+                    )
+                except Exception as e:
+                    log.warning(
+                        "[%s] hunt task %s: poc_runtime unavailable (%s) — "
+                        "continuing without a PoC recipe",
+                        ctx.run_id, task.task_id, e,
+                    )
+                    poc_exec = None
+                if poc_exec:
+                    user_input["poc_execution"] = poc_exec
+                    obs = poc_exec.get("observer") or {}
+                    log.info(
+                        "[%s] hunt %s: poc runtime=%s observer=%s",
+                        ctx.run_id, task.task_id, poc_exec["language"],
+                        obs.get("name", "none"),
+                    )
+                else:
+                    log.info(
+                        "[%s] hunt %s: no PoC runtime for languages=%s",
+                        ctx.run_id, task.task_id, languages or [],
+                    )
             try:
                 result = await run_agent(
                     stage="hunt",

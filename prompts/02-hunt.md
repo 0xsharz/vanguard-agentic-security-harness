@@ -33,8 +33,24 @@ running it.
     "url": "http://server.local:8888",
     "credentials": {"email": "...", "password": "..."}
   },
-  "execution_available": true     // true ONLY inside a sandbox — see the
+  "execution_available": true,    // true ONLY inside a sandbox — see the
                                    // execution-availability rule in Method step 4
+  "poc_execution": {              // present ONLY when execution is enabled
+    "language": "java",
+    "poc_filename": "PoC.java",
+    "compile_cmd": "javac -cp \"$CP\" -d . PoC.java",  // null = no compile step
+    "run_cmd": "java -cp \".:$CP\" PoC",
+    "deps_hint": "how to reach the TARGET's own dependencies ...",
+    "observer": {                 // null when this runtime ships no observer
+      "name": "jfr",
+      "kind": "what the mechanism records ...",
+      "wrap": "JDK_JAVA_OPTIONS=... {cmd}; jfr print ...",
+      "evidence_markers": ["jdk.ProcessStart", "..."],
+      "available_check": "command -v jfr >/dev/null 2>&1 && ...",
+      "notes": "blind spots + the honesty rule ...",
+      "files": ["/abs/path/inside/scratch_dir/helper.js"]
+    }
+  }
 }
 ```
 
@@ -43,7 +59,10 @@ present, your network egress is allowed **only** to that host (and
 `127.0.0.1`/local loopback). Do not call any other external host.
 `execution_available` tells you whether Bash/PoC execution is actually
 enabled for this run — read the execution-availability rule in Method
-step 4 before you attempt a PoC.
+step 4 before you attempt a PoC. `poc_execution` (present only when
+execution is enabled, and only for languages VASH has a recipe for) is the
+concrete run recipe for this repo's runtime — see the local-PoC substep in
+Method step 4.
 
 # Research lens
 
@@ -171,9 +190,55 @@ user- or config-supplied `Authorization`/token header reachable from the except 
        reproduce against the live target, drop the finding** — treat it
        as a static-analysis miss, not a finding.
      - Otherwise (no `live_target`): compile/run a local PoC in
-       `$scratch_dir` as before, in the target language.
-     - If neither path produces a reproducible proof, lower severity by
-       at least one step or drop the finding.
+       `$scratch_dir`, in the target language. When `poc_execution` is in
+       input, use it instead of improvising — it is the recipe for this
+       repo's runtime:
+       - Write the PoC to `poc_execution.poc_filename`, run
+         `poc_execution.compile_cmd` first when it is non-null, then run
+         `poc_execution.run_cmd`. Read `poc_execution.deps_hint` **before**
+         you write a line of PoC: it tells you how to reach the target's own
+         dependencies (classpath, `node_modules`, module context, installed
+         package). A PoC that cannot see them proves nothing except that a
+         hello-world compiled — verify the target's symbol is reachable
+         first, then write the exploit.
+       - If `poc_execution.observer` is non-null, run its `available_check`
+         FIRST. When the check passes, run the PoC through the wrapper:
+         substitute your run command into the `{cmd}` placeholder in
+         `observer.wrap`, then search the combined output for the strings in
+         `observer.evidence_markers`. A marker in the output is
+         **positive proof that the dangerous operation actually occurred**
+         — a process was spawned, a socket opened, a file written — which is
+         far stronger evidence than an exit code, since a swallowed
+         exception makes a no-op exit 0. Quote the marker lines into
+         `poc.run_output` and name the observer in `poc.notes`.
+         `observer.files` are helper files
+         already written into `$scratch_dir` for you; `observer.notes` lists
+         that mechanism's blind spots — read them before you claim proof.
+       - **Honesty rule — an observer is corroboration, never a verdict.**
+         If the `available_check` fails (tooling not installed, capability
+         not granted) or the wrapped run produces no marker lines, that is
+         **NOT evidence that the finding is false**. Re-run the PoC
+         unwrapped, judge it on its own output and assertions exactly as you
+         would without an observer, and record in `poc.notes` that the
+         observer was unavailable or silent.
+         **Never drop or downgrade a finding**
+         because an observer was unavailable.
+       - **Toolchain rule — a missing runtime is NOT a failed exploit.** If
+         `compile_cmd` / `run_cmd` fails because the toolchain itself is not
+         installed (`command not found` for `javac`, `java`, `mvn`, `go`,
+         `dotnet`, …), or the target's own dependencies cannot be reached at
+         all, then this sandbox cannot execute this language — which is the
+         `execution_available: false` situation discovered late, NOT evidence
+         against the finding. Set `needs_poc: true`, keep the severity your
+         static source→sink argument justifies, record in `poc.notes` exactly
+         which command was missing, and **never drop or downgrade the finding
+         for it**. A later run in a properly provisioned image can prove it.
+       - If `poc_execution` is absent (a language VASH has no recipe for),
+         proceed as before: pick the idiomatic toolchain yourself and say in
+         `poc.notes` how you ran it.
+     - If neither path produces a reproducible proof **and the toolchain was
+       actually present to attempt one**, lower severity by at least one step
+       or drop the finding. Never apply this rule to a PoC that could not run.
    - If your description uses hedged words ("possibly", "might",
      "could"), set `hedged_language: true`.
 5. Emit `gaps_observed` for every file/area you wanted to inspect but

@@ -32,6 +32,12 @@ vash = "vash.cli:main"
 [tool.setuptools.packages.find]
 include = ["vash*"]
 
+# Runtime observer assets (vash/lang/observers/) are data, not modules: the
+# .py ones ride along as package modules, but the .js preload would be dropped
+# from a wheel without this. materialize_observer reads them off disk.
+[tool.setuptools.package-data]
+"vash.lang.observers" = ["*.js"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests", "bench"]
