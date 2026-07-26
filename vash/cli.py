@@ -153,7 +153,12 @@ def run(repo: str, run_id: str | None, resume: bool, max_cost_usd: float | None,
         dynamic_validation: bool, no_sandbox: bool, provision: bool,
         config_path: str | None,
         allow_api_key: bool) -> None:
-    """Run the full 8-stage pipeline against a target repo."""
+    """Run the full 9-stage pipeline against a target repo.
+
+    Stages: recon → hunt → validate → gapfill → dedupe → trace → feedback →
+    chain → report, preceded by a deterministic provisioning step that
+    fingerprints the repo (and, with --provision, builds its environment).
+    """
     allow = _allow_api_key_from_env_or_flag(allow_api_key)
     try:
         configure_auth(allow_api_key=allow)

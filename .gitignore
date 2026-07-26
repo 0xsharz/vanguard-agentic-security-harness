@@ -74,3 +74,15 @@ notes.db
 
 # CodeGraph index (local, regenerable via `codegraph init`)
 .codegraph/
+
+# Internal working notes — kept locally, never published.
+# CLAUDE.md holds session context and unreleased findings; the docs below are
+# tool comparisons, an internal bug log, design specs for work that was
+# reverted, and stale pre-rename notes.
+CLAUDE.md
+docs/BENCHMARK-COMPARISON.md
+docs/BENCHMARK-COMPARISON.html
+docs/BENCHMARK-COMPARISON.pdf
+docs/DISCREPANCIES.md
+docs/wiring-notes.md
+docs/superpowers/

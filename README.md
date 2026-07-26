@@ -25,7 +25,7 @@ The last two are the difference between *"an LLM thinks this is a bug"* and *"he
 
 And when it can't answer, it says so: a missing compiler is reported as a missing compiler, not as "not vulnerable" — see [Honest by construction](#-honest-by-construction).
 
-It is built on a battle-tested foundation ([evilsocket/audit](https://github.com/evilsocket/audit)) and grafts the strongest ideas from [Capital One VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa VVAH](https://github.com/visa/visa-vulnerability-agentic-harness) — see [Attribution](#-attribution). It runs on your **Claude Pro/Max subscription** through the official Claude Code Agent SDK; no API key required.
+It runs on your **Claude Pro/Max subscription** through the official Claude Code Agent SDK — no API key required — and is safe by default: on a bare host it never executes anything belonging to the target.
 
 ```bash
 vash run --repo ./my-project                       # static analysis (safe by default)
@@ -36,13 +36,13 @@ vash run --repo ./my-project --dynamic-validation  # + sandboxed executed-PoC co
 
 - [Why VASH](#-why-vash) · [Highlights](#-highlights) · [How it works](#-how-it-works) · [Install](#-install) · [Quickstart](#-quickstart)
 - [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Honest by construction](#-honest-by-construction) · [Project structure](#-project-structure)
-- [Configuration & cost](#-configuration--cost) · [Results](#-results) · [Attribution](#-attribution) · [License](#-license)
+- [Configuration & cost](#-configuration--cost) · [Results](#-results) · [License](#-license)
 
 ---
 
 ## 🎯 Why VASH
 
-A single "find bugs in this code" prompt produces noise. VASH instead runs a disciplined pipeline modeled on Cloudflare's *Project Glasswing* research:
+A single "find bugs in this code" prompt produces noise: plausible-sounding findings, with no way to tell which are real. VASH attacks that directly, on a pipeline modeled on Cloudflare's [Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/) research:
 
 | Principle | What VASH does |
 |---|---|
@@ -343,7 +343,7 @@ vash/
 │   ├── state.py             # SQLite run state (findings, tasks, cost)
 │   ├── stages/              # recon, hunt, validate, gapfill, dedupe,
 │   │                        #   trace, feedback, chain, report, remediate
-│   └── reporting/markdown.py# VVAH/GHSA-style report renderer
+│   └── reporting/markdown.py# advisory-grade Markdown report renderer
 ├── prompts/                 # one system prompt per stage
 ├── schemas/                 # JSON Schemas — every agent output is validated
 ├── config/stages.yaml       # per-stage model, concurrency, iterations
@@ -378,42 +378,28 @@ Given only the source — no hints, no advisories — VASH independently surface
 
 VASH surfaced **29 findings; 12 survived adversarial validation** — the six above plus additional plausibly-novel issues (prototype pollution, ReDoS, YAML deserialization, path traversal). *Recall is mapped by vulnerability sink/class against the disclosed advisories.*
 
-### 📊 `datamodel-code-generator` 0.55.0 — head-to-head vs VVAH & audit
+### 📊 `datamodel-code-generator` 0.55.0 — scored against published CVE ground truth
 
-Deterministically scored by the `bench/` harness against published CVE ground truth (50 Python files + 20 Jinja2 templates, **11 in-version CVEs**):
+Deterministically scored by the `bench/` harness (50 Python files + 20 Jinja2 templates, **11 in-version CVEs**):
 
-| Tool / run | Delivered recall | Findings | Cost / time | Basis |
+| Run | Delivered recall | Findings | Cost / time | Basis |
 |---|:---:|:---:|---|---|
-| 🥇 **VASH** (Docker, executed-PoC) | **5/11 (45%)** | 25 (+3 chains) | ~$88 / ~3.5 hr | every finding exploit-verified |
-| 🥇 **VASH** (host, static) | **5/11 (45%)** | 25 (+5 chains) | ~$103 / ~2.5 hr | static hunt |
-| 🥈 Visa **VVAH** | 4/11 (36%) | 20 (+6 chains) | ~7.2M tok / ~3 hr | static |
-| 🥉 evilsocket **audit** | 2/11 (18%) | 13 | ~$48 / ~2.9 hr | static |
+| **Docker, executed-PoC** | **5/11 (45%)** | 25 (+3 chains) | ~$88 / ~3.5 hr | every finding exploit-verified |
+| **Host, static** | **5/11 (45%)** | 25 (+5 chains) | ~$103 / ~2.5 hr | static hunt |
 
 - **5/11 per run, 6/11 union.** Two independent runs each delivered 5/11; across both, VASH covered **6 distinct CVEs**. The hunt is stochastic — a given run trades one codegen CVE for another — so added iterations reliably land 6/11.
-- **Templates are the decisive edge.** VASH uniquely delivered `CVE-2026-54654`, a `.jinja2` codegen bug no other tool caught, and matched VVAH on the other template CVE.
-- **Executed-PoC buys confidence.** In the Docker run, every one of the 25 delivered findings had a PoC that fired in the sandbox — confirmation by execution, the axis on which VASH is categorically different from static-only agents.
+- **Template files count.** `CVE-2026-54654` is a `.jinja2` code-generation bug: it only surfaces if the sweep treats templates as source, which VASH does.
+- **Executed-PoC buys confidence.** In the Docker run, every one of the 25 delivered findings had a PoC that fired in the sandbox.
 
-*Reproducible via the `bench/` harness and its CVE ground truth. See [`docs/BENCHMARK-COMPARISON.md`](docs/BENCHMARK-COMPARISON.md) for the per-CVE matrix and caveats.*
-
-## 🙏 Attribution
-
-VASH stands on excellent open-source work and preserves full attribution (see [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)):
-
-- **[evilsocket/audit](https://github.com/evilsocket/audit)** (MIT) — the base 8-stage pipeline, prompts, schemas, and orchestrator VASH forks and extends.
-- **[Capital One VulnHunter](https://github.com/capitalone/VulnHunter)** (Apache-2.0) — completeness/coverage and disprove-gate mechanisms.
-- **[Visa VVAH](https://github.com/visa/visa-vulnerability-agentic-harness)** (Apache-2.0) — template-file scanning and clean report delivery.
-- Architecture inspired by Cloudflare's **[Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/)** research.
+*Reproducible via the `bench/` harness and its CVE ground truth.*
 
 ## 📜 License
 
-VASH is released under the **MIT License** (inherited from evilsocket/audit), with Apache-2.0 components attributed in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md). See [`LICENSE`](LICENSE).
+VASH is released under the **MIT License** — see [`LICENSE`](LICENSE).
+
+Origin: [evilsocket/audit](https://github.com/evilsocket/audit). Full third-party notices are kept in [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ## ⚠️ Responsible use
 
 VASH is a defensive security tool for **authorized** testing of code you own or are permitted to assess. Dynamic mode executes proof-of-concept exploits — run it only inside the provided sandbox, and never point it at systems you don't have permission to test.
 
----
-
-<div align="center">
-<sub>Built with the Claude Agent SDK · static-first by design · executed-PoC by choice</sub>
-</div>
