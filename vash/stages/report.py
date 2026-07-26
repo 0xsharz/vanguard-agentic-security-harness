@@ -77,6 +77,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
         _attach_input_inventory(db, ctx.run_id, fallback)
         _attach_coverage(db, ctx.run_id, fallback)
         _attach_cwe(db, ctx.run_id, fallback)
+        _attach_poc_evidence(db, ctx.run_id, fallback)
         _attach_variants(db, ctx.run_id, fallback)
         # Fix 1 (review): per-finding validation verdict + confidence — same
         # authoritative post-hoc treatment as CWE/variants above.
@@ -108,6 +109,7 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # D4: backfill CWE onto each finding from run state so downstream consumers
     # (SARIF, benchmark scorers that class-match on CWE) don't see a bare finding.
     _attach_cwe(db, ctx.run_id, payload)
+    _attach_poc_evidence(db, ctx.run_id, payload)
     # A2: attach located deduped-sibling references (VVAH "Also at:" parity) —
     # same authoritative post-hoc treatment as CWE/coverage/input-inventory above.
     _attach_variants(db, ctx.run_id, payload)
@@ -191,6 +193,68 @@ def _attach_cwe(db: StateDB, run_id: str, payload: dict) -> None:
                     f["cwe"] = cwe
     except Exception as e:  # additive disclosure — never break report emission
         log.warning("[%s] cwe backfill failed: %s", run_id, e)
+
+
+# How much executed-PoC material the report carries per finding. The PoC code
+# is the reproduction recipe (worth keeping in full-ish); run_output can be
+# megabytes of application noise, so it is tail-bounded — the observer marker
+# lines are extracted separately and always kept, because they ARE the proof.
+_POC_CODE_CHARS = 4000
+_POC_OUTPUT_CHARS = 2000
+_OBSERVER_MARKER = "[VASH-OBSERVER]"
+
+
+def _observer_markers(run_output: str) -> list[str]:
+    """The observer evidence lines from a PoC's output — the record that the
+    dangerous operation was actually seen to happen (a process spawned, a
+    socket opened), as opposed to a PoC that merely exited 0."""
+    return [ln.strip() for ln in (run_output or "").splitlines()
+            if _OBSERVER_MARKER in ln][:40]
+
+
+def _attach_poc_evidence(db: StateDB, run_id: str, payload: dict) -> None:
+    """Attach each finding's EXECUTED-PoC evidence to the report finding.
+
+    VASH's differentiator is that a confirmed finding was not merely reasoned
+    about — a real PoC was written and RUN in the sandbox, and (Phase 3) a
+    runtime observer recorded the dangerous operation as it fired. All of that
+    lived only in run state: the report agent never emits `poc`, so
+    markdown.py's "Proof of Concept" section rendered "Not determined" even for
+    findings that had been proven by execution, and `report.json` carried no
+    receipt at all. Measured on a live run: 5 delivered findings, every one with
+    poc_succeeded=1, and zero observer lines anywhere in the report.
+
+    Same authoritative post-hoc treatment as _attach_cwe/_attach_variants:
+    sourced from run state keyed by finding_id, never invented, fail-soft.
+    """
+    try:
+        by_id = {f.finding_id: f for f in db.get_findings(run_id)}
+        for rf in payload.get("findings", []):
+            finding = by_id.get(rf.get("finding_id"))
+            if finding is None:
+                continue
+            poc = ((finding.raw_json or {}).get("poc") or {})
+            if not poc.get("code"):
+                continue
+            run_output = str(poc.get("run_output") or "")
+            block = {
+                "language": poc.get("language"),
+                "code": str(poc.get("code"))[:_POC_CODE_CHARS],
+                "succeeded": bool(finding.poc_succeeded),
+            }
+            if run_output:
+                block["run_output"] = run_output[-_POC_OUTPUT_CHARS:]
+            if poc.get("notes"):
+                block["notes"] = str(poc["notes"])
+            markers = _observer_markers(run_output)
+            if markers:
+                block["observer_evidence"] = markers
+            rf["poc"] = block
+            # Executed-PoC status as a first-class, machine-readable field so a
+            # consumer can filter the proven subset without parsing prose.
+            rf["poc_succeeded"] = bool(finding.poc_succeeded)
+    except Exception as e:  # additive disclosure — never break report emission
+        log.warning("[%s] poc evidence attach failed: %s", run_id, e)
 
 
 def _attach_variants(db: StateDB, run_id: str, payload: dict) -> None:
