@@ -6,7 +6,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](#-license)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](#-install)
-[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen)](#-project-structure)
+[![Tests](https://img.shields.io/badge/tests-825%20passing-brightgreen)](#-project-structure)
 [![Powered by Claude](https://img.shields.io/badge/powered%20by-Claude%20Agent%20SDK-D97757)](https://www.anthropic.com)
 [![Static-first](https://img.shields.io/badge/mode-static--first%20%2B%20executed--PoC-6E56CF)](#-static-vs-dynamic-validation)
 
@@ -26,7 +26,7 @@ vash run --repo ./my-project --dynamic-validation  # + sandboxed executed-PoC co
 ## 📖 Table of contents
 
 - [Why VASH](#-why-vash) · [Highlights](#-highlights) · [How it works](#-how-it-works) · [Install](#-install) · [Quickstart](#-quickstart)
-- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Project structure](#-project-structure)
+- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Project structure](#-project-structure)
 - [Configuration & cost](#-configuration--cost) · [Results](#-results) · [Attribution](#-attribution) · [License](#-license)
 
 ---
@@ -47,11 +47,12 @@ A single "find bugs in this code" prompt produces noise. VASH instead runs a dis
 
 - 🧠 **9-stage agentic pipeline** — recon → hunt → validate → gapfill → dedupe → trace → feedback → chain → report, over a deterministic AST **call-graph spine**.
 - 🎯 **Executed-PoC confirmation** — opt-in `--dynamic-validation` runs each PoC in an isolated sandbox; on a bare host VASH stays **100% static** and never executes untrusted code.
-- 🌐 **Multi-language** — Python, JavaScript/TypeScript, Go, Java, Ruby, PHP, C/C++, and more, plus web templates (Jinja/EJS/Handlebars…) and IaC.
+- 🔬 **Runtime observers** — a PoC that exits 0 proves nothing. VASH watches the process while the exploit runs and records the dangerous operation *as it fires*, attributed to the line that caused it: a PEP-578 audit hook (Python), a `--require` preload (JS/TS), JFR (Java), syscall tracing (Go, C#). See [Proving it, per language](#-proving-it-per-language).
+- 🌐 **Multi-language, all the way to the proof** — VASH *finds* bugs in Python, JS/TS, Java, Go, C#, Ruby, PHP, C/C++, web templates and IaC — and for the first five it also **builds the target's environment and proves the bug by running an exploit inside it**.
 - 🔗 **Exploit-chain synthesis** — stitches individual findings into end-to-end attack chains.
 - 📊 **Professional reporting** — a detailed, advisory-grade Markdown report (threat model, CVSS + vectors, exploit scenarios, adversarial-verification verdicts, and paste-ready GitHub-Security-Advisory blocks) alongside a machine-readable `report.json`.
 - 📟 **Rich live logging** — per-stage progress, running cost, and a per-finding confirmation feed; degrades to clean plain lines when run detached.
-- 🛠️ **Decoupled commands** — `run` (scan), `remediate` (static patches), `validate` (independent second opinion).
+- 🛠️ **Decoupled commands** — `run` (scan), `remediate` (static patches), `validate` (independent second opinion), `provision` (build the target's environment).
 - 💳 **Subscription-native** — driven by Claude Pro/Max via the Agent SDK; optional metered API-key and OpenRouter/gateway support.
 
 ## 🔍 How it works
@@ -65,7 +66,7 @@ VASH maps the repository into a call-graph, fans out many narrowly-scoped hunter
 | # | Stage | Tier | Purpose |
 |---|---|---|---|
 | 1 | **Recon** | Opus | Map the repo; emit narrowly-scoped hunt tasks + a completeness inventory of every untrusted input. |
-| 2 | **Hunt** | Sonnet | One attack class per agent; hunts statically, then (dynamic mode) executes a PoC to confirm. |
+| 2 | **Hunt** | Sonnet | One attack class per agent; hunts statically, then (dynamic mode) writes and **runs** a PoC in the target's own runtime, under a [runtime observer](#-proving-it-per-language). |
 | 3 | **Validate** | Opus | Adversarial re-read on a *different* model — tries to **disprove** each finding. |
 | 4 | **Gapfill** | Sonnet | Re-queue under-covered areas until coverage is complete. |
 | 5 | **Dedupe** | Sonnet | Cluster findings by root cause; keep one canonical per distinct file. |
@@ -237,6 +238,62 @@ execution_enabled = --dynamic-validation  AND  (inside a sandbox  OR  --dangerou
 
 **Provisioning** (`--provision` / `vash provision --build`) is the one other path that runs target-authored instructions — a target's build is its own code (`npm ci` runs postinstall scripts, `mvn package` runs plugins). It is opt-in, and every command it issues executes **inside a container, never on the host**; the verify step additionally runs with `--network none`, `no-new-privileges` and cpu/memory/pid caps. Fingerprinting and Dockerfile rendering (the default, flagless path) are pure text analysis and execute nothing.
 
+## 🔬 Proving it, per language
+
+Running an exploit is only half the job. A proof-of-concept that exits `0` proves
+nothing — the sink may have swallowed an exception, or the script may never have
+reached the target's code at all. So when VASH executes a PoC it also **watches the
+process** and records the dangerous operation *as it happens*.
+
+| Language | How the PoC is built and run | What watches it | What it records |
+|---|---|---|---|
+| **Python** | run directly | PEP-578 audit hook (`sys.addaudithook`) | `subprocess`, `open`, `socket.connect`, `exec`, `pickle` — below the Python API, so a C extension or pickle gadget cannot slip past |
+| **JavaScript / TypeScript** | `node` (TS compiles first) | `--require` preload | `child_process`, `fs`, `net`, `http` — CommonJS **and** ESM |
+| **Java** | `javac` + the target's real classpath | Java Flight Recorder | `jdk.ProcessStart` / `SocketWrite` / `FileWrite`, **with a stack trace** |
+| **Go** | `go build`, then trace the binary | `strace` | `execve`, `openat`, `connect` |
+| **C#** | `dotnet build` against the target assembly | `strace` | same syscall boundary |
+
+### Evidence names the code that caused it
+
+A marker on its own only says *"a process started"* — innocent code does that too.
+Every marker therefore carries the frame that caused it:
+
+```
+[VASH-OBSERVER] audit:subprocess.Popen ('/bin/sh', ['-c', 'echo …; id'])
+    <- from /target/app/reports.py:7 in build_report
+```
+
+That attribution is what makes it evidence. If it names **your PoC** instead of the
+target, the PoC called the sink directly and proved nothing about the target — and
+the report says so rather than quietly counting it as a win.
+
+### Two rules that keep it honest
+
+- **An observer is corroboration, never a verdict.** If its tooling is missing (no
+  `jfr` in a JRE-only image, no `SYS_PTRACE` under Docker's default seccomp), the PoC
+  still runs unwrapped and the finding stands on its own evidence. *Absence of observer
+  output is never treated as proof the bug is not real.*
+- **A missing toolchain is not a failed exploit.** If `javac` isn't there, that is an
+  environment limitation, not a verdict — the finding keeps its severity and is marked
+  `needs_poc` for a later run. Without this rule a missing compiler would silently
+  delete real findings.
+
+### The environment the exploit runs in
+
+Compiling a Java PoC needs a JDK and the target's classpath; importing a Python target
+needs its dependencies. So `vash provision --scan-image` layers VASH **on top of the
+target's own provisioned image** — the container that hunts becomes the container the
+target needs:
+
+```
+vash-env-<target>          the target's environment (toolchain + dependencies)
+        └── + VASH         →  vash-scan-<target>     ← the scan runs in here
+```
+
+`./scripts/run-in-docker.sh` picks that image up automatically, and tells you what is
+lost if you haven't built one rather than silently degrading.
+
+
 ## 🗂️ Project structure
 
 ```
@@ -249,6 +306,9 @@ vash/
 │   ├── progress.py          # RunReporter — rich, fail-soft live logging
 │   ├── taint.py             # deterministic entry→sink taint analysis
 │   ├── provision/           # fingerprint → render Dockerfile → build/verify/repair
+│   │                        #   + scan_image.py (VASH inside the target's env)
+│   ├── lang/poc_runtime.py  # per-language PoC recipes + runtime observers
+│   ├── lang/observers/      # the audit hook / node preload assets
 │   ├── graph_context.py     # call-graph queries feeding the hunters
 │   ├── state.py             # SQLite run state (findings, tasks, cost)
 │   ├── stages/              # recon, hunt, validate, gapfill, dedupe,
@@ -259,7 +319,7 @@ vash/
 ├── config/stages.yaml       # per-stage model, concurrency, iterations
 ├── bench/                   # CVE-recall benchmark harness + ground truth
 ├── scripts/run-in-docker.sh # sandboxed (executed-PoC) runner
-├── tests/                   # 717 offline tests
+├── tests/                   # 825 offline tests
 ├── Dockerfile               # the isolation sandbox image
 ├── NOTICE / THIRD_PARTY_LICENSES.md   # attribution
 └── docs/                    # design specs & benchmark write-ups
