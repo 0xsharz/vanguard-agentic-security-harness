@@ -65,6 +65,15 @@ class TransientAgentError(RuntimeError):
     The agent call should be retried with backoff."""
 
 
+class UnclassifiedAgentError(TransientAgentError):
+    """An API error whose text matches no known signature (often empty).
+
+    A TransientAgentError subclass so every existing `except TransientAgentError`
+    handler keeps working — but the retry loop gives it a SHORTER ladder,
+    because "we could not classify this" is not evidence that it is temporary.
+    """
+
+
 class QuotaExhaustedError(RuntimeError):
     """The Claude subscription has run out of quota. Don't retry — abort
     the pipeline and let the user wait for the reset window."""
@@ -101,8 +110,14 @@ def _classify_api_error(text: str) -> tuple[str, type[RuntimeError]]:
         return "quota_exhausted", QuotaExhaustedError
     if any(m in t for m in _TRANSIENT_MARKERS):
         return "transient", TransientAgentError
-    # Default to transient — better to retry once than abort on classification miss.
-    return "unknown_api_error", TransientAgentError
+    # Default to transient — better to retry than abort on a classification
+    # miss. But an error we cannot classify is NOT known to be temporary: on a
+    # real run the same task failed identically on every attempt AND again on
+    # resume, so the full backoff ladder (30s + 60s + 120s) was pure waste — 18
+    # minutes of wall clock and the task lost anyway. Unknown errors therefore
+    # get ONE retry, which is what this comment always claimed; known-transient
+    # errors keep the full ladder.
+    return "unknown_api_error", UnclassifiedAgentError
 
 
 def _gate_tools(allowed_tools: list[str], execution_enabled: bool, stage: str) -> list[str]:
@@ -174,7 +189,13 @@ async def run_agent(
             raise
         except TransientAgentError as e:
             last_exc = e
-            if attempt >= transient_retries:
+            # An unclassifiable error is not KNOWN to be temporary, so it gets
+            # one retry instead of the full ladder. Measured cost of not doing
+            # this: the same task failed identically on all 4 attempts and again
+            # on resume, burning ~18 minutes of backoff for nothing.
+            budget = (1 if isinstance(e, UnclassifiedAgentError)
+                      else transient_retries)
+            if attempt >= budget:
                 break
             delay = min(transient_base_delay * (2 ** attempt), 240.0)
             log.warning(

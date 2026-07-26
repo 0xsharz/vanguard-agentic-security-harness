@@ -323,6 +323,10 @@ def _seed_confirmed_reachable(db: StateDB, run_id: str, fid: str) -> None:
         "task_id": tid, "attack_class": "ssrf", "scope_hint": "app.py",
         "target_files": ["app.py"], "rationale": "x", "priority": 1,
     })
+    # a task that produced a finding has, by definition, run to completion —
+    # leaving it 'pending' models a state a real run cannot reach, and now
+    # (correctly) reads as incomplete coverage.
+    db.update_task_status(tid, "done")
     db.add_finding(run_id, tid, {
         "finding_id": fid, "file": "app.py", "line_start": 10, "line_end": 12,
         "vuln_class": "ssrf", "severity": "medium", "description": "d",
@@ -375,3 +379,58 @@ async def test_run_report_fallback_path_includes_coverage(tmp_path: Path, monkey
     report = json.loads(out_path.read_text())
     assert report["coverage"]["coverage_complete"] is True
     assert report["coverage"]["inputs_enumerated"] == 0
+
+
+# --- failed / incomplete hunt tasks must be disclosed ------------------------
+
+def test_coverage_discloses_failed_and_incomplete_tasks(tmp_path):
+    """A real scan lost a hunt task to repeated API errors (done=54 failed=1),
+    so an entire attack angle went unexamined — and the delivered report said
+    nothing. The reader saw only the file counts and would have concluded the
+    sweep was complete."""
+    from vash.stages.report import _attach_coverage
+    from vash.state import StateDB
+
+    db = StateDB(tmp_path / "s.db")
+    try:
+        db.create_run("/t", "r1")
+        for tid, status in (("t_ok", "done"), ("t_dead", "failed"), ("t_never", "pending")):
+            db.add_task("r1", {"task_id": tid, "attack_class": "ssrf", "scope_hint": "x",
+                               "target_files": ["a.js"], "rationale": "r", "priority": 1,
+                               "source": "recon"})
+            db.update_task_status(tid, status)
+        payload = {}
+        _attach_coverage(db, "r1", payload)
+        cov = payload["coverage"]
+        assert cov["tasks_failed"] == 1
+        assert cov["tasks_incomplete"] == 1
+        assert cov["coverage_complete"] is False
+        assert "not examined" in cov["coverage_caveat"]
+        # and it must reach the human-facing report, not just the JSON
+        from vash.reporting.markdown import render_report
+        md = render_report({"coverage": cov, "scan_metrics": {"files_in_scope": 3},
+                            "findings": []}, db, "r1")
+        assert "Incomplete coverage" in md
+    finally:
+        db.close()
+
+
+def test_coverage_complete_when_every_task_finished(tmp_path):
+    from vash.stages.report import _attach_coverage
+    from vash.state import StateDB
+
+    db = StateDB(tmp_path / "s2.db")
+    try:
+        db.create_run("/t", "r2")
+        db.add_task("r2", {"task_id": "t1", "attack_class": "ssrf", "scope_hint": "x",
+                           "target_files": ["a.js"], "rationale": "r", "priority": 1,
+                           "source": "recon"})
+        db.update_task_status("t1", "done")
+        payload = {}
+        _attach_coverage(db, "r2", payload)
+        cov = payload["coverage"]
+        assert cov["tasks_failed"] == 0 and cov["tasks_incomplete"] == 0
+        assert cov["coverage_complete"] is True
+        assert "coverage_caveat" not in cov
+    finally:
+        db.close()

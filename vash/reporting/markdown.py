@@ -256,6 +256,15 @@ def _scan_metrics_section(report: dict) -> list[str]:
     bullet("Cost (USD)", f"${cost:.4f}" if isinstance(cost, (int, float)) else "")
     out.append("")
 
+    # Coverage gaps belong next to the coverage number, not buried in JSON. A
+    # reader who sees "Coverage 98%" and nothing else will assume the sweep was
+    # complete — even when hunt tasks died and whole attack angles went
+    # unexamined.
+    cvg = report.get("coverage") or {}
+    caveat = _s(cvg.get("coverage_caveat"))
+    if caveat:
+        out += [f"> **Incomplete coverage.** {caveat}", ""]
+
     phases = m.get("tokens_by_phase") or []
     if phases:
         out += ["### Tokens by phase", ""]

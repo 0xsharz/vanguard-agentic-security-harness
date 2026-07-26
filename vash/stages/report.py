@@ -320,10 +320,18 @@ def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
         (`db.get_inputs`);
       - tasks_by_source / findings_by_status from the 4.3 `db.run_summary`;
       - source_files/covered_files/catchall_tasks/catchall_dropped from the
-        F6 catch-all sweep record `_add_catchall_tasks` persists.
-    `coverage_complete` is False whenever the catch-all cap dropped files OR
-    any enumerated input never reached a disposition — an operator must never
-    be told coverage is complete when it isn't.
+        F6 catch-all sweep record `_add_catchall_tasks` persists;
+      - tasks_failed / tasks_incomplete straight from run state.
+    `coverage_complete` is False whenever the catch-all cap dropped files, any
+    enumerated input never reached a disposition, OR any hunt task failed or
+    never finished — an operator must never be told coverage is complete when
+    it isn't.
+
+    The task counts are not cosmetic. On a real scan one hunt task died to a
+    repeated API error (`done=54 failed=1`), meaning an entire attack angle on
+    the target was never examined — and NOTHING in the delivered report said so.
+    The reader saw only "source_files: 161, covered_files: 159" and would
+    reasonably conclude the sweep was complete.
 
     Fail-soft: coverage is purely additive disclosure. Any failure here is
     logged and swallowed so it can never break report emission.
@@ -339,9 +347,27 @@ def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:
             "findings_by_status": summary.get("findings", {}).get("by_status", {}),
             **(db.get_coverage(run_id) or {}),
         }
+        # Straight from run state: run_summary's `tasks` block carries only
+        # total/by_source, so reading a by_status off it would silently always
+        # report zero failures.
+        all_tasks = db.get_all_tasks(run_id)
+        failed = sum(1 for t in all_tasks if t.status == "failed")
+        # anything neither done nor failed never produced a result: a task left
+        # pending by a budget abort, or still marked running when the run ended.
+        incomplete = sum(1 for t in all_tasks if t.status not in ("done", "failed"))
+        coverage["tasks_failed"] = failed
+        coverage["tasks_incomplete"] = incomplete
+        if failed or incomplete:
+            coverage["coverage_caveat"] = (
+                f"{failed} hunt task(s) FAILED and {incomplete} never completed — "
+                "the attack angles they covered were not examined. Absence of a "
+                "finding in those areas is not evidence that none exists."
+            )
         coverage["coverage_complete"] = (
             coverage.get("catchall_dropped", 0) == 0
             and all(i.get("disposition") for i in inputs)
+            and failed == 0
+            and incomplete == 0
         )
         payload["coverage"] = coverage
     except Exception as e:  # fail-soft — coverage must never break the report
