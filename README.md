@@ -2,7 +2,7 @@
 
 # 🛡️ VASH — Vanguard Agentic Security Harness
 
-**A static-first, agentic vulnerability scanner that hunts broadly — then, in its sandbox, _proves_ findings by running a real exploit instead of just flagging what looks vulnerable.**
+**An agentic vulnerability scanner that doesn't just flag what _looks_ exploitable — it builds the target's environment, runs a real exploit inside it, and watches the vulnerability fire.**
 
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](#-license)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](#-install)
@@ -14,7 +14,16 @@
 
 ---
 
-VASH finds real, reachable vulnerabilities in source code — and its findings aren't guesses. Where most LLM scanners stop at *"this looks exploitable,"* VASH goes one step further: it **writes and executes a proof-of-concept for every candidate inside an isolated sandbox** and keeps only the ones that actually fire. That single mechanism — *static recall plus sandboxed executed-PoC confirmation* — is what separates it from every static-only agent.
+Most scanners hand you a list of things that *look* wrong and leave the triage to you. VASH is built around a harder question: **can this actually be exploited?** Answering it takes four steps, and it does all four:
+
+1. **Hunt broadly.** Many narrowly-scoped agents, each chasing one attack class in one place, over a real AST call-graph — not one prompt asked to "find bugs".
+2. **Build somewhere to prove it.** A Java exploit needs a JDK and the target's classpath; a Python one needs its dependencies. VASH fingerprints the repo and **provisions the target's own environment**, then runs the scan inside it.
+3. **Run the exploit.** Every candidate gets a real proof-of-concept, executed in an isolated container. Findings that don't reproduce are dropped.
+4. **Watch it fire.** A script exiting `0` proves nothing. VASH instruments the runtime and records the dangerous operation as it happens — `subprocess.Popen`, `jdk.ProcessStart`, an `execve` — **attributed to the line of target code that caused it**.
+
+The last two are the difference between *"an LLM thinks this is a bug"* and *"here is the command that ran, and here is the line that ran it."*
+
+And when it can't answer, it says so: a missing compiler is reported as a missing compiler, not as "not vulnerable" — see [Honest by construction](#-honest-by-construction).
 
 It is built on a battle-tested foundation ([evilsocket/audit](https://github.com/evilsocket/audit)) and grafts the strongest ideas from [Capital One VulnHunter](https://github.com/capitalone/VulnHunter) and [Visa VVAH](https://github.com/visa/visa-vulnerability-agentic-harness) — see [Attribution](#-attribution). It runs on your **Claude Pro/Max subscription** through the official Claude Code Agent SDK; no API key required.
 
@@ -26,7 +35,7 @@ vash run --repo ./my-project --dynamic-validation  # + sandboxed executed-PoC co
 ## 📖 Table of contents
 
 - [Why VASH](#-why-vash) · [Highlights](#-highlights) · [How it works](#-how-it-works) · [Install](#-install) · [Quickstart](#-quickstart)
-- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Project structure](#-project-structure)
+- [Commands](#-commands) · [The report](#-the-report) · [Static vs dynamic](#-static-vs-dynamic-validation) · [Proving it, per language](#-proving-it-per-language) · [Honest by construction](#-honest-by-construction) · [Project structure](#-project-structure)
 - [Configuration & cost](#-configuration--cost) · [Results](#-results) · [Attribution](#-attribution) · [License](#-license)
 
 ---
@@ -42,6 +51,8 @@ A single "find bugs in this code" prompt produces noise. VASH instead runs a dis
 | **Reachability as the gate** | A Trace stage proves an attacker-controlled input can actually reach the sink — unreachable "bugs" are dropped. |
 | **Feedback loops** | A confirmed pattern in one file automatically seeds hunts for the same pattern everywhere else. |
 | **Executed-PoC confirmation** | *VASH's differentiator.* In dynamic mode it runs a real exploit per candidate in a sandbox and keeps only what fires — every delivered finding is exploit-verified, not statically guessed. |
+| **A real environment to prove it in** | The scan runs *inside* the target's own provisioned image, so a PoC has the toolchain and dependencies it needs. Without this, a Java PoC dies at `command not found` and a Python one can't import the code it is attacking. |
+| **Silence is never success** | An unexamined file, a failed hunt task, a missing observer and an incomplete environment are all reported as such. A gap that isn't disclosed reads as a clean bill of health. |
 
 ## ✨ Highlights
 
@@ -292,6 +303,25 @@ vash-env-<target>          the target's environment (toolchain + dependencies)
 
 `./scripts/run-in-docker.sh` picks that image up automatically, and tells you what is
 lost if you haven't built one rather than silently degrading.
+
+
+## 🧭 Honest by construction
+
+A scanner that quietly skips something and reports nothing looks exactly like a
+scanner that checked and found nothing clean. VASH treats that as a bug class of
+its own, so each of these is enforced in code and covered by tests:
+
+| Situation | What a naive tool does | What VASH does |
+|---|---|---|
+| A hunt task dies (API error, timeout) | Report the rest; coverage looks complete | Reports `tasks_failed`, marks coverage **not complete**, and states *"absence of a finding in those areas is not evidence that none exists"* |
+| The file sweep hits its cap | Silently truncate | Discloses how many eligible files were **not** swept |
+| The observer's tooling is missing | Treat "no evidence" as "not vulnerable" | Runs the PoC unwrapped and keeps the finding; **absence of observer output is never a verdict** |
+| The language toolchain is absent | The PoC fails → drop the finding | A missing `javac` is an *environment limitation*, not a failed exploit. The finding keeps its severity and is flagged for a later run |
+| The environment built but deps didn't install | Report "built ✅" | Probes for the target's dependencies and reports the environment **INCOMPLETE** |
+| A PoC calls the sink directly | Count it as proof | The evidence names the PoC instead of the target — so it's visible that the exploit **bypassed** the code under test |
+
+None of this makes the tool look better in a demo. It's here because the opposite —
+a confident report over a partial scan — is how a security tool does real damage.
 
 
 ## 🗂️ Project structure
