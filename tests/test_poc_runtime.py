@@ -9,6 +9,7 @@ JVM / Node / strace / docker.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -515,15 +516,19 @@ def test_typescript_prefers_an_installed_compiler_over_npx(tmp_path) -> None:
     assert "/target/node_modules/.bin/tsc" in cmd
     assert cmd.index("command -v tsc") < cmd.index("npx --yes tsc")   # npx is last
 
-    # and the selection shell really picks the local one
+    # ...and the selection shell really picks the local one. PATH is narrowed to
+    # the system dirs so a globally-installed tsc (present on CI runners, absent
+    # on most laptops) cannot win the `command -v tsc` branch and make this test
+    # depend on what happens to be installed.
     binp = tmp_path / "node_modules" / ".bin"
     binp.mkdir(parents=True)
     tsc = binp / "tsc"
     tsc.write_text('#!/bin/sh\necho "LOCAL-TSC $*"\n')
     tsc.chmod(0o755)
-    p = subprocess.run(["sh", "-c", cmd], cwd=tmp_path, capture_output=True,
-                       text=True, timeout=60)
-    assert "LOCAL-TSC poc.ts" in p.stdout, p.stdout + p.stderr
+    env = {**os.environ, "PATH": "/usr/bin:/bin"}
+    proc = subprocess.run(["sh", "-c", cmd], cwd=tmp_path, capture_output=True,
+                          text=True, timeout=60, env=env)
+    assert "LOCAL-TSC poc.ts" in proc.stdout, proc.stdout + proc.stderr
 
 
 def test_csharp_has_a_working_observer_not_none() -> None:

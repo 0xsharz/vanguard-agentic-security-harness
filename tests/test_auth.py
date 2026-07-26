@@ -49,6 +49,11 @@ def _force_non_macos(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_missing_everything_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # configure_auth checks for the `claude` binary before it reports missing
+    # auth, so on a machine without the CLI this raises the CLI error instead.
+    # Every other test here already guards this; this one did not, and CI
+    # (which has no claude CLI) failed on it.
+    _require_claude_cli()
     _clear_all_auth_env(monkeypatch)
     _force_non_macos(monkeypatch)
     monkeypatch.setattr(auth_mod, "CREDENTIALS_PATH", tmp_path / "no_creds.json")
