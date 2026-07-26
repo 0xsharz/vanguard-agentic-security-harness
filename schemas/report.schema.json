@@ -1,0 +1,282 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Report",
+  "description": "Final structured report — only reachable, deduped findings.",
+  "type": "object",
+  "required": ["run_id", "target", "summary", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string" },
+    "target": {
+      "type": "object",
+      "required": ["repo_path"],
+      "additionalProperties": false,
+      "properties": {
+        "repo_path": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "by_severity"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "by_severity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "critical":      { "type": "integer", "minimum": 0 },
+            "high":          { "type": "integer", "minimum": 0 },
+            "medium":        { "type": "integer", "minimum": 0 },
+            "low":           { "type": "integer", "minimum": 0 },
+            "informational": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "title", "severity", "vuln_class", "file", "line_start", "line_end", "description", "evidence", "trace", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string" },
+          "title": { "type": "string", "minLength": 5 },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "informational"] },
+          "vuln_class": { "type": "string" },
+          "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
+          "file": { "type": "string" },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_end": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string", "minLength": 30 },
+          "evidence": { "type": "string" },
+          "trace": {
+            "type": "object",
+            "required": ["entry_points", "call_chain"],
+            "additionalProperties": false,
+            "properties": {
+              "entry_points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["kind", "location"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": { "type": "string" },
+                    "location": { "type": "string" },
+                    "controllable_by": { "type": "string" }
+                  }
+                }
+              },
+              "call_chain": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["file", "function", "line"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": { "type": "string" },
+                    "function": { "type": "string" },
+                    "line": { "type": "integer", "minimum": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "poc": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "language": { "type": "string" },
+              "code": { "type": "string" },
+              "succeeded": { "type": "boolean" }
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": { "type": ["string", "object"] },
+            "description": "Other findings in the same dedupe group ('Also at:'). The report agent's own output (validated here BEFORE report.py's post-hoc attach overwrites this field) may carry bare finding_id strings; the final, authoritative form report.py attaches from run state is a located object: {finding_id, file, line_start, line_end, vuln_class}."
+          },
+          "recommendation": { "type": "string", "minLength": 20 },
+          "cvss": {
+            "type": "object",
+            "description": "CVSS 3.1 base score/severity/vector for this finding. The report agent is expected to emit a real vector (matching validate's cvss_vector when the finding was confirmed with one); report.py's _attach_cvss backfills a severity-keyed baseline for whatever is left unset and never overwrites an existing value.",
+            "additionalProperties": false,
+            "properties": {
+              "score": { "type": "number", "minimum": 0, "maximum": 10 },
+              "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "informational"] },
+              "vector": { "type": "string" }
+            }
+          },
+          "impact": { "type": "string", "description": "What an attacker actually gains, or what breaks, if this is exploited." },
+          "exploit_scenario": { "type": "string", "description": "Concrete narrative: how an attacker with the access described in `trace.entry_points` reaches and triggers this." },
+          "preconditions": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Conditions that must hold for the exploit to work (auth level, feature flag, network position). Empty if none."
+          },
+          "how_to_fix": { "type": "string", "description": "Concrete remediation — the specific function/API/validation to change. A more detailed companion to `recommendation`." },
+          "validation": {
+            "type": "object",
+            "description": "Adversarial-verification outcome for this finding — Validate's verdict/rationale/validator_confidence. Injected from the run state (Finding.validation_status/validation_json) by report.py's _attach_validation; never agent-authored (Validate runs before Report and CANNOT emit new findings, so this is only ever a read of its already-stored verdict). Only the keys Validate actually emitted are present.",
+            "additionalProperties": false,
+            "properties": {
+              "verdict": { "type": "string", "enum": ["confirmed", "rejected", "needs_more_info"] },
+              "rationale": { "type": "string" },
+              "validator_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "The hunter's own confidence in the finding (distinct from `validation.validator_confidence`). Injected from the run state (Finding.confidence) by report.py's _attach_validation."
+          }
+        }
+      }
+    },
+    "chains": {
+      "type": "array",
+      "description": "Multi-step exploit chains (V11) — combinations of >=2 findings more dangerous than any single bug. Each chain carries its OWN severity; per-finding severities are unchanged (CVSS/V4 stays authoritative). Injected from the run state by report.py.",
+      "items": {
+        "type": "object",
+        "required": ["title", "finding_ids", "severity", "narrative"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string" },
+          "finding_ids": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "blocked_by_controls": { "type": "array", "items": { "type": "string" } },
+          "narrative": { "type": "string" }
+        }
+      }
+    },
+    "input_inventory": {
+      "type": "array",
+      "description": "Resolved completeness ledger — every attacker-controllable input Recon enumerated, each with its reconciled disposition (covered|uncovered). Injected from the run state by report.py; a completeness artifact, not a per-finding record.",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_type", "location", "trust_level", "disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "source_type": { "type": ["string", "null"] },
+          "location": { "type": ["string", "null"] },
+          "variable": { "type": ["string", "null"] },
+          "entry_point": { "type": ["string", "null"] },
+          "trust_level": { "type": ["string", "null"] },
+          "disposition": { "type": ["string", "null"], "description": "covered | uncovered | null (unreconciled)" },
+          "disposition_evidence": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Consolidated coverage disclosure (4.7). Merges the F1 input ledger, the 4.3 run_summary tasks/findings breakdowns, and the F6 catch-all sweep/drop counts into one object so an operator sees, in one place, what was and wasn't covered. Injected from the run state by report.py — optional and permissive (additionalProperties allowed) so it never blocks report emission or a future field addition.",
+      "properties": {
+        "inputs_enumerated": { "type": "integer", "minimum": 0 },
+        "inputs_covered": { "type": "integer", "minimum": 0 },
+        "inputs_uncovered": { "type": "integer", "minimum": 0 },
+        "tasks_by_source": { "type": "object", "description": "Task count keyed by source (recon, catchall, reconcile, ...)." },
+        "findings_by_status": { "type": "object", "description": "Finding count keyed by validation_status (confirmed, false_positive, null=unvalidated, ...)." },
+        "source_files": { "type": "integer", "minimum": 0, "description": "Eligible source files seen by the F6 catch-all sweep." },
+        "covered_files": { "type": "integer", "minimum": 0, "description": "Of source_files, how many were already targeted by some task before the sweep." },
+        "catchall_tasks": { "type": "integer", "minimum": 0, "description": "Catch-all sweep tasks queued." },
+        "catchall_dropped": { "type": "integer", "minimum": 0, "description": "Eligible files the sweep could NOT queue because build_catchall_tasks's max_tasks cap was hit — coverage is INCOMPLETE whenever this is > 0." },
+        "coverage_complete": { "type": "boolean", "description": "False when catchall_dropped > 0 or any enumerated input never reached a disposition. Never imply full coverage when this is false." }
+      }
+    },
+    "threat_model": {
+      "type": "object",
+      "description": "Lightweight system threat model synthesized by the report agent from the recon context and findings already in its input (not fresh analysis). Optional — omitted when there is too little context to synthesize one responsibly.",
+      "additionalProperties": false,
+      "properties": {
+        "system_context": { "type": "string", "description": "Plain-language description of what the system does and how it is exposed." },
+        "assets": {
+          "type": "array",
+          "description": "Things worth protecting that the findings touch (data, credentials, internal services).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "sensitivity": { "type": "string" }
+            }
+          }
+        },
+        "trust_boundaries": {
+          "type": "array",
+          "description": "Points where trust level changes that the findings actually cross (network edge, auth boundary, process boundary).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "ranked_threats": {
+          "type": "array",
+          "description": "The findings grouped into threats and ranked by how much each matters for this system.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "threat": { "type": "string" },
+              "rank": { "type": "integer", "minimum": 1 },
+              "rationale": { "type": "string" }
+            }
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "description": "Things the agent could not resolve from recon + findings alone (needs a human, or more scanning).",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "scan_metrics": {
+      "type": "object",
+      "description": "Run-level scan metrics — file coverage, duration, cost, and per-phase token usage. Injected from the run state by report.py (cost/coverage/duration are never agent-authored); each property is independently optional so a metric that isn't knowable yet (e.g. duration before the run finishes) is simply omitted rather than emitted as a misleading null.",
+      "additionalProperties": false,
+      "properties": {
+        "files_in_scope": { "type": "integer", "minimum": 0 },
+        "files_analyzed": { "type": "integer", "minimum": 0 },
+        "coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "duration_sec": { "type": "number", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "tokens_by_phase": {
+          "type": "array",
+          "description": "Token/cost aggregates per pipeline stage, from the costs table (db.run_summary).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "phase": { "type": "string" },
+              "input_tokens": { "type": "integer", "minimum": 0 },
+              "output_tokens": { "type": "integer", "minimum": 0 },
+              "cost_usd": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "description": "Verification funnel tally (raw hunter findings -> validated true/false positives), disclosing precision rather than just the final reachable/deduped `findings` count. Injected from the run state by report.py — authoritative, never agent-authored.",
+      "additionalProperties": false,
+      "properties": {
+        "raw_findings": { "type": "integer", "minimum": 0 },
+        "true_positives": { "type": "integer", "minimum": 0 },
+        "false_positives": { "type": "integer", "minimum": 0 },
+        "needs_more_info": { "type": "integer", "minimum": 0 },
+        "duplicates_collapsed": { "type": "integer", "minimum": 0 },
+        "precision_pct": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    }
+  }
+}

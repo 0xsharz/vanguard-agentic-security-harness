@@ -1,0 +1,91 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Harness state + outputs (regenerated per run)
+state.db
+state.db-journal
+state.db-wal
+state.db-shm
+work/
+results/
+*.log
+
+# bench harness scratch (clones + phase-driver state, regenerated per run)
+bench/bench_workdir/
+
+# Intentionally-vulnerable test app — kept out of history
+test_target/
+test_target/**
+
+# Local plans / notes
+plans/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated test artifacts
+users.db
+notes.db
+*.sqlite
+*.sqlite3
+
+/REPORT-*.md
+/REPORT.md
+
+# Run-scoped state DBs + scratch (regenerated per run)
+*-state.db
+.dmcg-*
+.tables
+
+# CodeGraph index (local, regenerable via `codegraph init`)
+.codegraph/
+
+# Internal working notes — kept locally, never published.
+# CLAUDE.md holds session context and unreleased findings; the docs below are
+# tool comparisons, an internal bug log, design specs for work that was
+# reverted, and stale pre-rename notes.
+CLAUDE.md
+docs/BENCHMARK-COMPARISON.md
+docs/BENCHMARK-COMPARISON.html
+docs/BENCHMARK-COMPARISON.pdf
+docs/DISCREPANCIES.md
+docs/wiring-notes.md
+docs/superpowers/
+
+# Unreviewed report PDFs — kept locally until their contents are checked.
+docs/VASH-*.pdf

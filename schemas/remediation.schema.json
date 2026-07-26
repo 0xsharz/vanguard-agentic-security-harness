@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RemediationRecord",
+  "description": "One finding's remediation outcome: a static, root-cause patch + security regression test (status=patched), prose guidance when the policy gate denies a patch (status=guidance_only), or a documented non-fix (status=cannot_fix). Generated statically — the patch is emitted as a unified diff by reading code; it is NEVER produced by executing the target.",
+  "type": "object",
+  "required": ["finding_id", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": { "type": "string" },
+    "status": { "type": "string", "enum": ["patched", "guidance_only", "cannot_fix"] },
+    "cwe": { "type": "string" },
+    "root_cause": { "type": "string" },
+    "patch_diff": { "type": "string", "description": "unified diff; empty for guidance_only/cannot_fix" },
+    "security_test": { "type": "string", "description": "a regression test that fails pre-fix, passes post-fix" },
+    "test_path": { "type": "string" },
+    "guidance": { "type": "string" },
+    "needs_verification": { "type": "boolean", "description": "true until --verify runs the target's tests in a sandbox" },
+    "risk_notes": { "type": "string" }
+  }
+}

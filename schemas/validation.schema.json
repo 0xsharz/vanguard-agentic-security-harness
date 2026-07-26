@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ValidationVerdict",
+  "description": "Adversarial review verdict for a single finding. CANNOT emit new findings.",
+  "type": "object",
+  "required": ["finding_id", "verdict", "rationale", "validator_confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": { "type": "string" },
+    "verdict": {
+      "type": "string",
+      "enum": ["confirmed", "rejected", "needs_more_info"]
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 30,
+      "description": "Why the finding stands or falls. Must engage with the evidence, not restate it."
+    },
+    "alternative_explanation": {
+      "type": "string",
+      "description": "If rejected: the benign explanation. If confirmed: any rival hypothesis you ruled out."
+    },
+    "missing_preconditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Conditions that must hold for the bug to fire (sanitization upstream, config flags, etc.)."
+    },
+    "suggested_test": {
+      "type": "string",
+      "description": "Concrete test that would disambiguate — e.g. a curl command, a unit test stub."
+    },
+    "validator_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "cvss_vector": {
+      "type": "string",
+      "pattern": "^CVSS:3\\.[01]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]$",
+      "description": "CVSS 3.1 base vector, e.g. CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H. Required for a confirmed verdict; omit/empty for rejected or needs_more_info."
+    },
+    "cvss_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "CVSS 3.1 base score (0.0-10.0), computed deterministically from cvss_vector by the pipeline — not emitted by the model."
+    },
+    "cvss_rating": {
+      "type": "string",
+      "enum": ["Critical", "High", "Medium", "Low", "None", "Unknown"],
+      "description": "Qualitative CVSS band derived from cvss_score by the pipeline — not emitted by the model."
+    }
+  }
+}

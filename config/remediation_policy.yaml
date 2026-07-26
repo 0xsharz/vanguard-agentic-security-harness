@@ -1,0 +1,70 @@
+# Copyright 2026 Visa, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# ============================================================================
+# Remediation Policy — HARD GATES   (ported from Visa VVAH, tuned for VASH)
+# ----------------------------------------------------------------------------
+# Loaded by `vash remediate` (vash/remediation_policy.py) BEFORE any patch
+# agent runs. This is enforcement, not guidance. A finding whose CWE resolves
+# to a deny decision is short-circuited to guidance-only output; the patch
+# agent is never invoked for it.
+#
+# Semantics:
+#   - default_action: what happens when a CWE matches NO rule. BINARY:
+#       * allow -> every non-denied CWE is patch-eligible (pair with empty allow)
+#       * deny  -> only CWEs on the allow list are patched (pair with empty deny)
+#   - deny:  CWEs (enumerate descendants explicitly) that MUST NOT be patched
+#   - allow: CWEs explicitly eligible for patch generation
+#   - Evaluation order: kill_switch -> deny -> allow -> default_action
+#   - Fail-closed: a missing/invalid policy file => treat ALL findings as deny
+#     (guidance-only). See vash/remediation_policy.py::load_policy.
+# ============================================================================
+
+schema_version: "1.0"
+
+# default_action: allow -> patch everything EXCEPT what the deny list blocks.
+# With an empty allow list below, every non-denied CWE becomes patch-eligible.
+# Tuned for VASH's Python static-first target set: allow by default, deny
+# nothing out of the box, kill-switch off. Operators tighten this per program.
+default_action: allow     # anything not explicitly denied -> patch-eligible
+
+# Global kill-switch. Either signal forces EVERY decide() to GUIDANCE_ONLY
+# regardless of the rules below — for stopping a bad-patch batch mid-flight
+# without editing the lists.
+kill_switch:
+  env_var: VASH_REMEDIATE_DISABLE     # "1"/"true"/"yes"/"on" -> disable
+  file:    ./.vash-remediate-off      # presence of this file -> disable
+
+# ----------------------------------------------------------------------------
+# DENY — never generate a patch; emit prose guidance + route to a human.
+# Enumerate the full descendant set explicitly so child CWEs can't slip through
+# (this gate matches exact CWE ids; it does not walk a CWE ontology).
+# Empty by default for VASH.
+# ----------------------------------------------------------------------------
+deny: []
+
+# ----------------------------------------------------------------------------
+# ALLOW — CWEs explicitly eligible for patch generation. Only consulted to
+# override default_action=deny. Empty by default (default_action=allow covers
+# the common case).
+# ----------------------------------------------------------------------------
+allow: []
+
+# ----------------------------------------------------------------------------
+# Path guards (RESERVED — ported from VVAH for forward-compatibility; the
+# CWE-only decide() gate does not consult these yet). A future --apply/PR path
+# will match them against the finding location and the diff's changed-file set.
+# ----------------------------------------------------------------------------
+deny_paths: []
+forbid_patch_paths: []

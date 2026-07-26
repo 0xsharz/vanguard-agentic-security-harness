@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HuntTask",
+  "description": "A narrowly-scoped vulnerability hunt assignment: ONE attack class against a specific code region.",
+  "type": "object",
+  "required": ["task_id", "attack_class", "scope_hint", "target_files", "rationale", "priority"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" },
+    "attack_class": {
+      "type": "string",
+      "description": "One concrete vulnerability class. Examples: sql_injection, command_injection, path_traversal, ssrf, xxe, deserialization, prototype_pollution, race_condition, integer_overflow, use_after_free, auth_bypass, idor, ssti, open_redirect, xss_stored, xss_reflected, regex_dos, zip_slip, log_injection."
+    },
+    "scope_hint": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Concrete locus to focus on. Include the trust boundary above the sink, e.g. 'HTTP handler in routes/users.py reads name from request.GET, passed unchanged to subprocess.Popen in services/exporter.py'."
+    },
+    "target_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "Repo-relative file paths the hunter should focus on."
+    },
+    "rationale": { "type": "string", "minLength": 10 },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "source": {
+      "type": "string",
+      "enum": ["recon", "gapfill", "feedback", "reconcile", "taint", "sink_backward", "specialist", "catchall"],
+      "description": "Which stage produced this task. 'reconcile' = F1 completeness re-queue; 'taint' = deterministic entry→sink chunking (V8); 'sink_backward' = orphan-sink backward audit — a dangerous sink no enumerated input reaches, hunted backward through its callers (F3); 'specialist' = gated repo-wide specialist sweep (V12) — see 'specialist'; 'catchall' = terminal whole-repo coverage sweep (F6) — LOW-priority hunt for an eligible source file no other task covered."
+    },
+    "specialist": {
+      "type": "string",
+      "description": "Set when source='specialist': the SPECIALIST_HINTS key (audit.lang.hints) naming which repo-wide lens to hunt with — crypto|logic-bug|access-control|deserialization|batch-etl|iac. Flows into Hunt's hints_for(specialist=...) call so the researcher gets the specialist lens instead of the generic language hints."
+    }
+  }
+}

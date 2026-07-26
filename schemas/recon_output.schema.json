@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReconOutput",
+  "description": "Architecture map + initial hunt task queue.",
+  "type": "object",
+  "required": ["subsystems", "architecture", "initial_tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "subsystems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "language", "purpose"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string", "description": "Repo-relative directory or file." },
+          "language": { "type": "string" },
+          "purpose": { "type": "string" },
+          "external_dependencies": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "required": ["build_commands", "entry_points", "trust_boundaries"],
+      "additionalProperties": false,
+      "properties": {
+        "build_commands": { "type": "array", "items": { "type": "string" } },
+        "test_commands":  { "type": "array", "items": { "type": "string" } },
+        "entry_points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "location"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "type": "string", "description": "http_route|cli|rpc|grpc|message_queue|cron|library_api|webhook|file_input" },
+              "location": { "type": "string", "description": "file:line or symbol reference" },
+              "auth_required": { "type": "boolean" },
+              "notes": { "type": "string" }
+            }
+          }
+        },
+        "trust_boundaries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "source_zone": { "type": "string" },
+              "sink_zone": { "type": "string" }
+            }
+          }
+        },
+        "external_inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "type": "string", "description": "http_param|http_header|http_body|env_var|file|cli_arg|stdin|db_field|broker_message" },
+              "controllable_by": { "type": "string", "description": "anonymous_user|authenticated_user|admin|internal_service" }
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Attacker-controllable input inventory — every place external data enters. Optional so pre-F1 recon outputs still validate; when present it drives the completeness ledger (every input is reconciled to a disposition).",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_type", "location", "variable", "entry_point", "trust_level"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "description": "Stable unique id for this input (e.g. in_1)." },
+          "source_type": { "type": "string", "description": "HTTP param|header|body field|cookie|CLI arg|env var|queue message|file upload|deserialized input|DB read|etc." },
+          "location": { "type": "string", "description": "file:line where the input enters the codebase." },
+          "variable": { "type": "string", "description": "What the input is bound to in code (use N/A for no-input endpoints)." },
+          "entry_point": { "type": "string", "description": "Route, CLI command, queue consumer, gRPC method, or other entry point that receives it." },
+          "trust_level": { "type": "string", "enum": ["unauthenticated", "authenticated", "internal", "privileged"] }
+        }
+      }
+    },
+    "initial_tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "hunt_task.schema.json" }
+    },
+    "design_controls": {
+      "type": "array",
+      "description": "Security controls the codebase employs. Optional so pre-V5 recon still validates. Injected downstream as HINTS to verify empirically — never as trusted exclusions.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "description": "auth|input_validation|output_encoding|csrf|rate_limit|access_control|sanitizer|crypto|other" },
+          "location": { "type": "string", "description": "file:line or subsystem where the control is implemented." },
+          "description": { "type": "string" },
+          "applies_to": { "type": "string", "description": "Optional: which entry points/subsystems/paths this control guards." }
+        }
+      }
+    }
+  }
+}

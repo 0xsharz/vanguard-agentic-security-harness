@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 600" font-family="'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#0B1120"/><stop offset="1" stop-color="#0E1A32"/>
+  </linearGradient>
+  <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#182742"/><stop offset="1" stop-color="#101B31"/>
+  </linearGradient>
+  <linearGradient id="spine" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#182946"/><stop offset="0.5" stop-color="#233A63"/><stop offset="1" stop-color="#182946"/>
+  </linearGradient>
+  <linearGradient id="emblem" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#8B7CF6"/><stop offset="1" stop-color="#35D6C6"/>
+  </linearGradient>
+</defs>
+<rect x="6" y="6" width="1268" height="588" rx="22" fill="url(#bg)" stroke="#22304D" stroke-width="1.5"/>
+<rect x="34" y="34" width="30" height="30" rx="9" fill="url(#emblem)"/>
+<circle cx="49" cy="49" r="5.5" fill="#0B1120"/>
+<text x="78" y="52" font-size="27" font-weight="700" fill="#E9F0F9">The VASH Pipeline</text>
+<text x="79" y="76" font-size="14.5" fill="#96A9C6">9 narrow agents · deterministic call-graph spine · exploits proved in the target’s own environment</text>
+<circle cx="1006" cy="45" r="6.5" fill="#8B7CF6"/>
+<text x="1020" y="50" font-size="13.5" fill="#C6D4EA">Opus — recon / validate / trace</text>
+<circle cx="1006" cy="72" r="6.5" fill="#35D6C6"/>
+<text x="1020" y="77" font-size="13.5" fill="#C6D4EA">Sonnet — all other stages</text>
+<path d="M 912 246 C 912 138, 232 138, 232 246" fill="none" stroke="#E8825A" stroke-width="2.4" stroke-dasharray="7 6" opacity="0.9"/>
+<polygon points="232,250 226,240 238,240" fill="#E8825A"/>
+<rect x="400" y="150" width="344" height="24" rx="12" fill="#0E1A32" opacity="0.92" stroke="#2A3D5E" stroke-width="1"/>
+<text x="572" y="166" font-size="13.5" fill="#F2B69C" text-anchor="middle">feedback re-seeds hunts from confirmed patterns</text>
+<line x1="157" y1="304" x2="164" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="170,304 162,300 162,308" fill="#6B82AB"/>
+<line x1="293" y1="304" x2="300" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="306,304 298,300 298,308" fill="#6B82AB"/>
+<line x1="429" y1="304" x2="436" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="442,304 434,300 434,308" fill="#6B82AB"/>
+<line x1="565" y1="304" x2="572" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="578,304 570,300 570,308" fill="#6B82AB"/>
+<line x1="701" y1="304" x2="708" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="714,304 706,300 706,308" fill="#6B82AB"/>
+<line x1="837" y1="304" x2="844" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="850,304 842,300 842,308" fill="#6B82AB"/>
+<line x1="973" y1="304" x2="980" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="986,304 978,300 978,308" fill="#6B82AB"/>
+<line x1="1109" y1="304" x2="1116" y2="304" stroke="#6B82AB" stroke-width="2.4" opacity="0.85"/>
+<polygon points="1122,304 1114,300 1114,308" fill="#6B82AB"/>
+<line x1="96" y1="358" x2="96" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="96" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="232" y1="358" x2="232" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="232" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="368" y1="358" x2="368" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="368" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="504" y1="358" x2="504" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="504" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="640" y1="358" x2="640" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="640" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="776" y1="358" x2="776" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="776" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="912" y1="358" x2="912" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="912" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="1048" y1="358" x2="1048" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="1048" cy="430" r="3" fill="#4B6EA0"/>
+<line x1="1184" y1="358" x2="1184" y2="430" stroke="#33507B" stroke-width="1.6" opacity="0.7"/>
+<circle cx="1184" cy="430" r="3" fill="#4B6EA0"/>
+<rect x="38" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="96" cy="279" r="15" fill="#8B7CF6"/>
+<text x="96" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">1</text>
+<text x="96" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">recon</text>
+<rect x="78" y="326" width="36" height="3" rx="1.5" fill="#8B7CF6"/>
+<text x="96" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">map &amp; scope</text>
+<rect x="174" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="232" cy="279" r="15" fill="#35D6C6"/>
+<text x="232" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">2</text>
+<text x="232" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">hunt</text>
+<rect x="214" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="232" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">find bugs</text>
+<rect x="310" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="368" cy="279" r="15" fill="#8B7CF6"/>
+<text x="368" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">3</text>
+<text x="368" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">validate</text>
+<rect x="350" y="326" width="36" height="3" rx="1.5" fill="#8B7CF6"/>
+<text x="368" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">disprove</text>
+<rect x="446" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="504" cy="279" r="15" fill="#35D6C6"/>
+<text x="504" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">4</text>
+<text x="504" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">gapfill</text>
+<rect x="486" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="504" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">cover gaps</text>
+<rect x="582" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="640" cy="279" r="15" fill="#35D6C6"/>
+<text x="640" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">5</text>
+<text x="640" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">dedupe</text>
+<rect x="622" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="640" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">cluster</text>
+<rect x="718" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="776" cy="279" r="15" fill="#8B7CF6"/>
+<text x="776" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">6</text>
+<text x="776" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">trace</text>
+<rect x="758" y="326" width="36" height="3" rx="1.5" fill="#8B7CF6"/>
+<text x="776" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">reachability</text>
+<rect x="854" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="912" cy="279" r="15" fill="#35D6C6"/>
+<text x="912" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">7</text>
+<text x="912" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">feedback</text>
+<rect x="894" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="912" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">re-seed</text>
+<rect x="990" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="1048" cy="279" r="15" fill="#35D6C6"/>
+<text x="1048" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">8</text>
+<text x="1048" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">chain</text>
+<rect x="1030" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="1048" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">exploit chains</text>
+<rect x="1126" y="250" width="116" height="108" rx="15" fill="url(#chip)" stroke="#2A3E60" stroke-width="1.3"/>
+<circle cx="1184" cy="279" r="15" fill="#35D6C6"/>
+<text x="1184" y="284" font-size="15" font-weight="700" fill="#0B1120" text-anchor="middle">9</text>
+<text x="1184" y="318" font-size="21" font-weight="700" fill="#E9F0F9" text-anchor="middle">report</text>
+<rect x="1166" y="326" width="36" height="3" rx="1.5" fill="#35D6C6"/>
+<text x="1184" y="346" font-size="12.5" fill="#96A9C6" text-anchor="middle">advisory</text>
+<rect x="38" y="430" width="1204" height="46" rx="14" fill="url(#spine)" stroke="#3A5688" stroke-width="1.3"/>
+<text x="640" y="459" font-size="16" font-weight="700" fill="#D3E2F8" text-anchor="middle" letter-spacing="0.3">deterministic AST call-graph spine</text>
+<rect x="38" y="516" width="1204" height="46" rx="14" fill="url(#spine)" stroke="#3F7F72" stroke-width="1.3"/>
+<circle cx="232" cy="516" r="3" fill="#35D6C6"/>
+<text x="640" y="545" font-size="16" font-weight="700" fill="#D9F2EE" text-anchor="middle" letter-spacing="0.3">the target&#8217;s own provisioned environment &#183; executed PoC &#183; runtime observer</text>
+<text x="640" y="498" font-size="12.5" fill="#96A9C6" text-anchor="middle">feeds taint analysis (entry → sink) &#160;+&#160; sink-backward hunting — agents reason over real data-flow, not guesses</text>
+</svg>

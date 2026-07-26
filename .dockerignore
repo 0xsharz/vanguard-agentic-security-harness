@@ -1,0 +1,12 @@
+.venv
+.git
+results
+work
+state.db
+graphify-out
+.bench-targets
+**/__pycache__
+*.pyc
+.superpowers
+.pytest_cache
+*.egg-info
