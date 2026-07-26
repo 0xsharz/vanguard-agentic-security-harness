@@ -118,8 +118,13 @@ def render_scan_dockerfile(base_image: str) -> str:
 FROM {base_image}
 
 # git: recon's read-only history mining. build-essential/curl: graphify + wheels.
+# strace: the observer for compiled languages (Go) — a compiled binary has no
+# in-process hook, so evidence has to be taken at the syscall boundary. Absent
+# from every base image we build on, and without it Go PoCs run with no
+# observer at all. It still needs CAP_SYS_PTRACE at RUN time (see
+# scripts/run-in-docker.sh); the observer's available_check tests for both.
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-        git build-essential curl ca-certificates \\
+        git build-essential curl ca-certificates strace \\
     && rm -rf /var/lib/apt/lists/*
 
 {_NODE_SETUP}

@@ -146,3 +146,10 @@ def test_venv_probe_actually_attempts_a_venv_not_just_a_version_check():
     probe_at = df.index("/tmp/vash-venv-probe")
     real_at = df.index(f"python3 -m venv {VENV}")
     assert probe_at < real_at            # probe gates the real creation
+
+
+def test_ships_strace_for_the_compiled_language_observer():
+    """A compiled Go binary has no in-process hook, so its only observer is
+    syscall-level. strace is absent from every base image we build on — without
+    it, Go PoCs run with no observer at all (verified in the real go image)."""
+    assert "strace" in render_scan_dockerfile("golang:1.22")

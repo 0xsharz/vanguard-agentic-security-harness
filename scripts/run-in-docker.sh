@@ -60,7 +60,14 @@ else
 fi
 
 echo "[run-in-docker] scanning $TARGET_ABS  (run-id=$RUN_ID)  in the sandbox ..."
+# --cap-add=SYS_PTRACE: the syscall-level observer (strace) for compiled
+# languages such as Go. Docker's default seccomp profile blocks ptrace(2), so
+# without this a Go PoC runs with no observer and its evidence is limited to
+# whatever the PoC prints itself. ptrace is confined to processes inside this
+# container — it does not cross the container boundary to the host, which is
+# where the isolation guarantee actually lives.
 docker run --rm -it \
+  --cap-add=SYS_PTRACE \
   -e CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}" \
   -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   -e ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}" \
