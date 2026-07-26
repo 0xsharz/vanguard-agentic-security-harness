@@ -245,8 +245,9 @@ JFR_OBSERVER = Observer(
 STRACE_OBSERVER = Observer(
     name="strace",
     kind=("strace on the syscalls that matter (execve, openat, connect) — a "
-          "compiled Go binary has no in-process hook, so the evidence is "
-          "taken at the kernel boundary. Optional instrumentation."),
+          "compiled binary (Go) or a runtime with no offline tracing tool "
+          "(.NET) has no in-process hook, so the evidence is taken at the "
+          "kernel boundary. Optional instrumentation."),
     asset=None,
     wrap=(
         'strace -f -s 256 -e trace=execve,openat,connect -o vash-strace.log '
@@ -263,19 +264,23 @@ STRACE_OBSERVER = Observer(
         "needs `--cap-add=SYS_PTRACE` (or `--security-opt seccomp=unconfined`). "
         "The available_check above actually attempts a trace, so it fails for "
         "the permission case and not only for a missing binary. `-f` follows "
-        "the goroutine threads and any child process. "
-        "VERIFIED in the scan image (which now ships strace, and "
+        "threads (goroutines, .NET thread-pool) and any child process. "
+        "VERIFIED in the scan image for BOTH users: Go (built binary) and C# "
+        "(dotnet host running the PoC assembly) each produced the injected "
+        "`/bin/sh -c ...` execve. "
+        "VERIFIED detail (which now ships strace, and "
         "run-in-docker.sh grants --cap-add=SYS_PTRACE): tracing the built "
         "binary produced execve(\"/usr/bin/sh\", [\"sh\", \"-c\", "
         "\"...; id; echo INJECTED\"]) — the injected command line itself. "
         "The FIRST execve is always the PoC binary's own launch; that one is "
         "baseline noise, the evidence is the execve that carries attacker "
         "input. "
-        "**Trace the BUILT BINARY, never `go run`** — the toolchain's own "
+        "**Trace the BUILT ARTEFACT, never a command that also COMPILES** (`go "
+        "run`, `dotnet run` without `--no-build`) — the toolchain's own "
         "execve/openat would satisfy these markers unconditionally, making "
-        "every PoC look like it spawned a process. The runtime's compile_cmd "
-        "builds first for exactly this reason. Even so, `openat(` fires "
-        "during ordinary Go runtime startup, so treat `execve(` and "
+        "every PoC look like it spawned a process. Both runtimes' compile_cmd "
+        "build first for exactly this reason. Even so, `openat(` fires "
+        "during ordinary runtime startup, so treat `execve(` and "
         "`connect(` as the load-bearing markers and read the traced path/"
         "argument before calling an openat hit proof. " + _HONESTY
     ),
