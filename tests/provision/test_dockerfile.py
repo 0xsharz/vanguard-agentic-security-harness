@@ -185,3 +185,15 @@ def test_typescript_repo_matches_the_javascript_ecosystem(tmp_path):
     fp = fingerprint(repo)
     assert fp.primary_language == "typescript"
     assert render_dockerfile(fp, repo).dockerfile.count("pnpm") >= 1
+
+
+def test_js_ecosystems_build_the_workspace_during_provisioning(tmp_path):
+    """A TS package resolves to dist/, which does not exist until something
+    builds it — so a PoC doing require('@scope/pkg') hits MODULE_NOT_FOUND and
+    never reaches the code it is attacking (observed on graphql-code-generator).
+    The build is non-fatal: verify still reports a real failure."""
+    for marker, tool in (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn")):
+        repo = _mk(tmp_path / tool, {"a.ts": "1\n", "package.json": "{}", marker: "x\n"})
+        df = render_dockerfile(fingerprint(repo), repo).dockerfile
+        assert "run build" in df, tool
+        assert "|| true" in df, tool

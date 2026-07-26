@@ -43,7 +43,7 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "base": "node:{ver}",
         "default_ver": "20",
         "ver_key": "node",
-        "install": "RUN npm ci || npm install",
+        "install": "RUN (npm ci || npm install) && (npm run build --if-present || true)",
         "build": "npm run build --if-present",
         "test": "npm test --if-present",
         "deps": _NPM_DEPS_PROBE,
@@ -56,10 +56,18 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         # monorepo templated as npm installs nothing (observed on
         # graphql-code-generator). corepack activates the exact pnpm pinned by
         # the repo's packageManager field.
+        # A TS monorepo's packages resolve to dist/, which does not exist until
+        # something builds them — so a PoC doing `require('@scope/pkg')` hits
+        # MODULE_NOT_FOUND and can never reach the code it is meant to attack
+        # (observed on graphql-code-generator). pnpm builds in topological order,
+        # so the workspace packages are compiled even when a trailing example
+        # fails; `|| true` keeps that failure from failing the image, and the
+        # verify step still reports it honestly.
         "install": (
             "RUN corepack enable \\\n"
             "    && (pnpm install --frozen-lockfile "
-            "|| pnpm install --no-frozen-lockfile || true)"
+            "|| pnpm install --no-frozen-lockfile || true) \\\n"
+            "    && (pnpm -r --if-present run build || true)"
         ),
         "build": "pnpm -r --if-present run build",
         "test": "pnpm -r --if-present run test",
@@ -71,7 +79,8 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "ver_key": "node",
         "install": (
             "RUN corepack enable \\\n"
-            "    && (yarn install --immutable || yarn install || true)"
+            "    && (yarn install --immutable || yarn install || true) \\\n"
+            "    && (yarn run build || true)"
         ),
         "build": "yarn run build || true",
         "test": "yarn run test || true",
