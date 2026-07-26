@@ -39,8 +39,37 @@ V8 taint + F3 sink-backward. Decoupled commands: `vash run` / `vash remediate` /
   Verify probes **dependency presence** — an image that builds but lacks the target's deps is reported
   INCOMPLETE, not success (this caught a real Phase-1 template bug: `pip install -e . || pip install -r
   requirements.txt` short-circuited and left deps uninstalled).
-- **Phase 3 (open)**: per-language PoC observers (JFR/async_hooks/strace) + the `vash poc --run-id` command
-  (spec: `docs/superpowers/specs/2026-07-26-vash-poc-command-design.md`). C/C++ deferred entirely per user.
+- **Phase 3 IN PROGRESS — Python DONE + PROVEN** (`fdb29f7..c91c086`). USER DIRECTIVE 2026-07-26: language
+  support must be **IN THE PIPELINE FLOW — no decoupled command**. A `vash poc` command was built from the
+  approved spec and then **reverted at user request** (do not rebuild it; the spec is stale on this point).
+  - `vash/lang/poc_runtime.py` — per-language Runtime registry (python/js/ts/java/go/csharp): poc filename,
+    compile/run cmds, `deps_hint` (how to reach the TARGET's deps). `vash/lang/observers/` — real assets:
+    PEP-578 audit hook (python) + node `--require` preload; JFR/strace are recipes.
+  - `hunt.py` injects `poc_execution` + materializes the observer **only when `execution_enabled`** (bare-host
+    static path byte-for-byte unchanged). Fail-open.
+  - **THE KEY ARCHITECTURAL FIX** (`vash/provision/scan_image.py`, `vash provision --scan-image`): the scan used
+    to run in `vash:latest`, which has **no javac/java/mvn/go/dotnet/strace and no docker socket** → every
+    non-Python recipe died at `command not found`, and Python only worked by luck (target imports that
+    succeeded — yaml, pydantic — are VASH's OWN deps). Fix inverts the layering:
+    `vash-scan-<target>` = the Phase 2 provisioned image + VASH. Docker-socket mounting was REJECTED
+    (root-equivalent on host, destroys the isolation claim). **LOAD-BEARING: VASH's venv must NEVER be on
+    PATH** — with it on PATH `python3` resolves to VASH's interpreter and the target is invisible
+    (`import app.reports` → ModuleNotFoundError); VASH is invoked by absolute path.
+  - `report.py::_attach_poc_evidence` — the executed-PoC receipt + `[VASH-OBSERVER]` marker lines now reach
+    `report.json` (previously: 5 delivered findings, all `poc_succeeded=1`, zero evidence in the report).
+  - **LIVE PROOF** (`vulnpy1`, 2026-07-26, $9.17 / 17m14s, in `vash-scan-vuln-py`): found BOTH planted bugs
+    (CWE-78 cmd-injection, CWE-502 unsafe yaml) + 3 unplanted real ones (CWE-306 no-auth, CWE-400 DoS proven
+    with a 19s block, CWE-674); 5 delivered, **all `poc_succeeded=1`**; 3 exploit chains incl. "missing auth +
+    injection = unauthenticated RCE". Targets live in `scratchpad/vulntargets/` (py/node-cjs/node-esm/java/go).
+  - **Honesty rules (tested, load-bearing)**: an observer is corroboration NEVER a verdict; and a missing
+    **toolchain** is not a failed exploit — the pre-existing "drop the finding" rule would otherwise have
+    silently deleted real findings on every Java target.
+  - **NEXT**: languages one at a time (user directive) — Node → Java → Go → C#. Known-open from adversarial
+    review: node `--require` misses **ESM**; node wrap hardcodes `$PWD`; python wrap can't carry a
+    `PYTHONPATH=` prefix; `runtime_for` lets repo primary_language outrank a task's own file language; Go
+    strace markers are satisfied by `go run` itself (false proof); `/target` is read-only so Go/C# "write into
+    the module" recipes hit EROFS.
+- C/C++ deferred entirely per user.
 
 ## How to run (Docker, the real way)
 Auth into the container needs a container-passable token (macOS Keychain can't cross into Linux):
