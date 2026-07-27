@@ -28,7 +28,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from vash.provision.dockerfile import RenderedRecipe, render_dockerfile
+from vash.provision.dockerfile import (
+    DEPS_UNKNOWN_MARKER,
+    RenderedRecipe,
+    render_dockerfile,
+)
 from vash.provision.fingerprint import ProjectFingerprint, fingerprint
 from vash.provision.repair import repair_dockerfile
 
@@ -256,7 +260,10 @@ def _verify(client: DockerClient, tag: str, recipe: RenderedRecipe, *,
     if recipe.deps_cmd:
         r = client.run(tag=tag, command=recipe.deps_cmd, workdir=workdir,
                        timeout=timeout, network=network)
-        v.deps_ok = r.ok
+        # A probe that could not list the installed packages exits 0 so it is
+        # not mistaken for a failure — but "I could not check" is not "it is
+        # fine" either, so it lands on None (unknown) rather than True.
+        v.deps_ok = None if DEPS_UNKNOWN_MARKER in (r.log or "") else r.ok
         v.deps_log_tail = _tail(r.log, 2000)
     if recipe.build_cmd:
         r = client.run(tag=tag, command=recipe.build_cmd, workdir=workdir,
@@ -389,6 +396,13 @@ def provision_environment(
             result.notes.append(
                 "verify: the target's declared dependencies are NOT installed "
                 "in the image — the environment is INCOMPLETE "
+                f"({result.verify.deps_log_tail.strip()[:200]})"
+            )
+        elif (result.verify.deps_ok is None
+                and DEPS_UNKNOWN_MARKER in (result.verify.deps_log_tail or "")):
+            result.notes.append(
+                "verify: could NOT check whether the target's dependencies are "
+                "installed — treat the environment as UNVERIFIED, not as ready "
                 f"({result.verify.deps_log_tail.strip()[:200]})"
             )
         if result.verify.build_ok is False:

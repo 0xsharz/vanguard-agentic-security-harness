@@ -285,3 +285,21 @@ def test_outside_a_scan_image_it_still_reports_planned(tmp_path, monkeypatch):
     monkeypatch.delenv("VASH_SCAN_IMAGE", raising=False)
     r = provision_environment(_py_repo(tmp_path), client=FakeDocker())
     assert r.status == "planned"
+
+
+def test_unlistable_dependencies_are_unknown_not_ok(tmp_path):
+    """"I could not check" must not land as "it is fine". The probe exits 0 so
+    it is not mistaken for a build failure, and marks the log instead; verify
+    has to read that as unknown (None), or an image whose dependency state was
+    never established would be reported as ready."""
+    from vash.provision.dockerfile import DEPS_UNKNOWN_MARKER
+    client = FakeDocker(run_results=[
+        CommandResult(0, f"{DEPS_UNKNOWN_MARKER}: no working pip in the image"),
+        CommandResult(0, "3.11.0"),
+        CommandResult(0, "ok"),
+    ])
+    result = provision_environment(_py_repo(tmp_path), client=client,
+                                   build=True, verify=True)
+    assert result.verify is not None
+    assert result.verify.deps_ok is None                    # unknown, not True
+    assert any("UNVERIFIED" in n for n in result.notes)
