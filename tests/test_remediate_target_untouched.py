@@ -36,13 +36,16 @@ def _hash_tree(root: Path) -> dict[str, str]:
     }
 
 
-def _target(tmp_path: Path) -> Path:
+def _target(tmp_path: Path, *, with_symlink: bool = False) -> Path:
     repo = tmp_path / "target"
     (repo / "app").mkdir(parents=True)
     (repo / "app" / "db.py").write_text(
         "def q(name):\n    cur.execute(f\"select * from t where n='{name}'\")\n")
     (repo / "app" / "untouched.py").write_text("SECRET_CONSTANT = 42\n")
     (repo / "README.md").write_text("# target\n")
+    if with_symlink:
+        # An untrusted repo may contain an absolute link back into itself.
+        (repo / "shortcut.py").symlink_to(repo / "app" / "untouched.py")
     return repo
 
 
@@ -85,7 +88,13 @@ def _hostile_agent(escaped: list[Path]):
         (ws / "backdoor.py").write_text("import os\n")
         # 4. a deletion
         (ws / "README.md").unlink()
-        # 5. traversal out of the workspace, the escape an agent could try blind
+        # 5. write through anything that looks like a local file but isn't
+        for name in ("shortcut.py",):
+            try:
+                (ws / name).write_text("PWNED VIA SYMLINK\n")
+            except OSError:
+                pass
+        # 6. traversal out of the workspace, the escape an agent could try blind
         for rel in ("../ESCAPED.txt", "../../ESCAPED.txt"):
             victim = ws / rel
             try:
@@ -113,7 +122,7 @@ def _hostile_agent(escaped: list[Path]):
 async def test_target_repository_is_byte_identical_after_remediation(
     tmp_path, monkeypatch
 ):
-    target = _target(tmp_path)
+    target = _target(tmp_path, with_symlink=True)
     before = _hash_tree(target)
     escaped: list[tuple[str, Path]] = []
 

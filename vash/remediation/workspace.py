@@ -26,6 +26,7 @@ the copy.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -63,6 +64,51 @@ def _tree_size(repo: Path, cap: int) -> int | None:
         except OSError:
             continue
     return total
+
+
+def _neutralize_escaping_symlinks(workspace: Path) -> list[str]:
+    """Delete any symlink in the copy that points outside the copy.
+
+    The tree is copied with ``symlinks=True`` so a link is never *followed* out
+    of the repo during the copy. But copying a link verbatim carries the escape
+    into the workspace: the target repo is untrusted, and a repo containing
+    ``shortcut.py -> /abs/path/into/the/target`` gives the agent a file that
+    looks local and writes straight through to the real repository. Writing to
+    it defeats every other control here — the agent never has to know where the
+    target is, because the target came to it.
+
+    Links that stay inside the workspace are legitimate and are kept. Walked
+    with ``followlinks=False`` so a symlinked directory cannot loop us.
+    """
+    root = workspace.resolve()
+    removed: list[str] = []
+
+    def escapes(p: Path) -> bool:
+        try:
+            (p.parent / os.readlink(p)).resolve().relative_to(root)
+            return False
+        except ValueError:
+            return True
+        except OSError:
+            return True          # unreadable link: remove rather than trust it
+
+    for dirpath, dirnames, filenames in os.walk(workspace, followlinks=False):
+        d = Path(dirpath)
+        for name in list(dirnames) + filenames:
+            p = d / name
+            if not p.is_symlink() or not escapes(p):
+                continue
+            try:
+                p.unlink()
+                rel = str(p.relative_to(workspace))
+                removed.append(rel)
+                log.warning("[remediate] workspace: removed symlink %r — it "
+                            "points outside the repository, so an edit through "
+                            "it would have escaped the workspace", rel)
+            except OSError as e:  # pragma: no cover - platform dependent
+                log.error("[remediate] workspace: could NOT remove escaping "
+                          "symlink %s: %s", p, e)
+    return removed
 
 
 def _git(workspace: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -127,6 +173,9 @@ def workspace_for(repo_path: Path, *,
             symlinks=True,           # copy the link, never follow it out of the tree
             ignore_dangling_symlinks=True,
         )
+        # ...then drop the links that would let an EDIT do what the copy would
+        # not: reach outside the workspace.
+        _neutralize_escaping_symlinks(workspace)
         if not _init_baseline(workspace):
             log.warning("[remediate] workspace: no git baseline — diff capture "
                         "will not be available for this finding")

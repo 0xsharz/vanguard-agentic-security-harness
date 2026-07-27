@@ -238,3 +238,56 @@ def test_an_expected_path_is_still_kept_out_of_the_patch(tmp_path):
         (ws / "gen_test.py").write_text("def test(): ...\n")
         enforce(ws, ["app/notes.py"], expected_extra=["gen_test.py"])
         assert not (ws / "gen_test.py").exists()     # reverted, not merely excused
+
+
+# ---- symlinks: the escape the copy would otherwise carry with it -----------
+
+def test_a_symlink_pointing_into_the_target_cannot_be_written_through(tmp_path):
+    """The target repo is untrusted. A repo containing an absolute symlink to
+    its own file gives the agent something that looks local but writes straight
+    into the real repository — defeating every other control, because the agent
+    never has to learn where the target is: the target came to it."""
+    repo = _repo(tmp_path)
+    real = repo / "app" / "notes.py"
+    (repo / "shortcut.py").symlink_to(real)
+    before = _hash_tree(repo)
+
+    with workspace_for(repo) as ws:
+        assert not (ws / "shortcut.py").is_symlink()   # not carried into the copy
+        (ws / "shortcut.py").write_text("PWNED\n")     # now just a local file
+
+    assert _hash_tree(repo) == before
+
+
+def test_a_symlink_pointing_anywhere_outside_is_removed(tmp_path):
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("safe\n")
+    repo = _repo(tmp_path)
+    (repo / "out.txt").symlink_to(outside)
+    with workspace_for(repo) as ws:
+        assert not (ws / "out.txt").is_symlink()
+        (ws / "out.txt").write_text("PWNED\n")
+    assert outside.read_text() == "safe\n"
+
+
+def test_a_symlinked_directory_escaping_the_repo_is_removed(tmp_path):
+    """A link to a DIRECTORY is the wider hole: every file under it becomes
+    writable, not just one."""
+    outside = tmp_path / "secrets"
+    outside.mkdir()
+    (outside / "key.txt").write_text("safe\n")
+    repo = _repo(tmp_path)
+    (repo / "cfg").symlink_to(outside, target_is_directory=True)
+    with workspace_for(repo) as ws:
+        assert not (ws / "cfg").exists()
+    assert (outside / "key.txt").read_text() == "safe\n"
+
+
+def test_a_symlink_that_stays_inside_the_repo_is_preserved(tmp_path):
+    """Only escapes are removed — an in-repo link is legitimate and its removal
+    would silently change the code under review."""
+    repo = _repo(tmp_path)
+    (repo / "alias.py").symlink_to(Path("app") / "notes.py")   # relative, inside
+    with workspace_for(repo) as ws:
+        assert (ws / "alias.py").is_symlink()
+        assert (ws / "alias.py").read_text().startswith("def read")
