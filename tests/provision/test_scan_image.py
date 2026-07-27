@@ -153,3 +153,21 @@ def test_ships_strace_for_the_compiled_language_observer():
     syscall-level. strace is absent from every base image we build on — without
     it, Go PoCs run with no observer at all (verified in the real go image)."""
     assert "strace" in render_scan_dockerfile("golang:1.22")
+
+
+def test_node_setup_guards_on_npm_not_node():
+    """The next line runs `npm`, so the guard must test for npm.
+
+    Testing the proxy broke a real build: on a `FROM python:3` (Debian trixie)
+    base the nodesource setup script does not support the release, apt fell
+    through to Debian's `nodejs` package — which ships npm SEPARATELY — and the
+    build died on `npm: not found` with `node` sitting right there satisfying
+    the guard.
+    """
+    from vash.provision.scan_image import _NODE_SETUP
+    assert "command -v npm" in _NODE_SETUP
+    # a fallback that does not depend on nodesource supporting the distro
+    assert "install -y --no-install-recommends npm" in _NODE_SETUP
+    # and the image proves all three exist rather than assuming
+    assert "npm --version" in _NODE_SETUP
+    assert "claude --version" in _NODE_SETUP

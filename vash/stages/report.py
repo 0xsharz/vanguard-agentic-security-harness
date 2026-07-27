@@ -106,6 +106,11 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
     # inventory above: sourced from run state, injected post-hoc, never
     # left to the agent to (mis)represent.
     _attach_coverage(db, ctx.run_id, payload)
+    # Preflight: what the run could ACTUALLY do. Belongs beside the findings,
+    # because "PoC confirmation was impossible in this container" changes how
+    # every finding below should be read — and a log line nobody opens does not
+    # convey that.
+    _attach_preflight(ctx, payload)
     # D4: backfill CWE onto each finding from run state so downstream consumers
     # (SARIF, benchmark scorers that class-match on CWE) don't see a bare finding.
     _attach_cwe(db, ctx.run_id, payload)
@@ -311,6 +316,40 @@ def _attach_validation(db: StateDB, run_id: str, payload: dict) -> None:
                 rf["confidence"] = finding.confidence
     except Exception as e:  # additive disclosure — never break report emission
         log.warning("[%s] validation attach failed: %s", run_id, e)
+
+
+def _attach_preflight(ctx, payload: dict) -> None:
+    """Attach what the run could actually do, and a caveat when it could not.
+
+    A scan whose container lacks the target's dependencies still emits findings
+    — they are just static guesses that read like executed proof. The
+    `coverage.caveats` line is the part that matters: it puts the limitation
+    where someone reading the findings will actually meet it.
+
+    Fail-soft and additive: a missing preflight record leaves the report exactly
+    as it was.
+    """
+    try:
+        pre = getattr(ctx, "preflight", None)
+        if not pre:
+            return
+        payload["preflight"] = pre
+        if pre.get("execution_enabled") and not pre.get("poc_confirmation_available"):
+            missing = ", ".join(pre.get("degraded") or []) or "unknown"
+            caveat = (
+                "Executed-PoC confirmation was requested but NOT fully available "
+                f"in this container (missing: {missing}). Findings below may not "
+                "have been proven by execution, and a finding that could not be "
+                "proven here must NOT be read as disproven."
+            )
+            coverage = payload.get("coverage")
+            if isinstance(coverage, dict):
+                coverage.setdefault("caveats", []).append(caveat)
+                coverage["coverage_complete"] = False
+            else:
+                payload["preflight_caveat"] = caveat
+    except Exception as e:  # pragma: no cover - additive disclosure only
+        log.warning("[report] preflight attach failed (report still emitted): %s", e)
 
 
 def _attach_coverage(db: StateDB, run_id: str, payload: dict) -> None:

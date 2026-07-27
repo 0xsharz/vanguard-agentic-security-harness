@@ -41,6 +41,12 @@ class StageContext:
     # a hunter on a Java/Go/C# target knows what it is looking at. None until
     # that step runs — it is fail-open, so None must stay harmless.
     project_env: dict | None = None
+    # Preflight (vash.preflight): what this run can ACTUALLY do, as opposed to
+    # what it is permitted to do. Set by the pre-recon capability check and
+    # carried to the report, so "PoC confirmation was impossible in this
+    # container" appears next to the findings instead of only in a log. None
+    # until that step runs — fail-open, so None must stay harmless.
+    preflight: dict | None = None
     # Path to the cached code graph (audit.graph). Set by the taint step (V8)
     # once built so later graph consumers (V6/F2) can reuse the same cache.
     graph_cache_path: Path | None = None

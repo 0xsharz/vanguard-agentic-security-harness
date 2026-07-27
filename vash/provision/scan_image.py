@@ -95,14 +95,29 @@ _VENV_SETUP = f"""RUN set -eu; \\
 
 # The claude CLI is an npm package and the agent SDK shells out to it, so node
 # is required even when the target ecosystem is not JavaScript.
+#
+# The guard tests for **npm**, not node, because npm is what the next line
+# actually runs. Testing the proxy instead of the thing is how this broke: on a
+# `FROM python:3` (Debian trixie) base the nodesource setup script does not
+# support the release, so apt fell through to DEBIAN's `nodejs` package — and
+# Debian ships npm SEPARATELY. `node` was then present, the guard was satisfied,
+# and the build died on `npm: not found`. It worked on python:3.11-slim only
+# because nodesource supports bookworm and its package bundles npm.
+#
+# So: try nodesource, and if npm is still missing afterwards, install Debian's
+# npm package rather than trusting either path to have provided it. Same lesson
+# as the venv probe above — check for what you are about to use.
 _NODE_SETUP = """RUN set -eu; \\
-    if ! command -v node >/dev/null 2>&1; then \\
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; \\
-        apt-get install -y --no-install-recommends nodejs; \\
+    if ! command -v npm >/dev/null 2>&1; then \\
+        (curl -fsSL https://deb.nodesource.com/setup_20.x | bash -) || true; \\
+        apt-get install -y --no-install-recommends nodejs || true; \\
+    fi; \\
+    if ! command -v npm >/dev/null 2>&1; then \\
+        apt-get update && apt-get install -y --no-install-recommends npm; \\
     fi; \\
     npm install -g @anthropic-ai/claude-code; \\
     rm -rf /var/lib/apt/lists/*; \\
-    claude --version"""
+    node --version; npm --version; claude --version"""
 
 
 def render_scan_dockerfile(base_image: str) -> str:

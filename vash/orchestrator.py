@@ -9,7 +9,7 @@ import logging
 import os
 from pathlib import Path
 
-from vash import sandbox, stages
+from vash import preflight, sandbox, stages
 from vash.catchall import build_catchall_tasks
 from vash.config import HarnessConfig
 from vash.graph import GraphQuery, build_or_load
@@ -262,6 +262,30 @@ def _provision_environment(ctx: StageContext, db: StateDB, *, build: bool) -> No
         log.warning(
             "[%s] provisioning failed (continuing run): %s", ctx.run_id, e
         )
+
+
+def _run_preflight(ctx: StageContext) -> None:
+    """Record what this run can actually do, before anything is spent.
+
+    Fail-open, like provisioning: a preflight that cannot complete must never
+    abort a run. What it must never do is stay quiet — so a missing capability
+    is logged loudly here and travels to the report via ``ctx.preflight``,
+    where an operator reading the findings can see that PoC confirmation was
+    unavailable rather than assuming every finding was executed.
+    """
+    try:
+        report = preflight.run_preflight(
+            ctx.repo_path, execution_enabled=ctx.execution_enabled)
+        ctx.preflight = report.as_dict()
+        if ctx.execution_enabled and report.degraded:
+            log.warning(
+                "[%s] preflight: execution is ENABLED but %d capability it "
+                "depends on is MISSING — PoC confirmation will be weak or "
+                "impossible for this target. %s",
+                ctx.run_id, len(report.degraded), report.summary_line(),
+            )
+    except Exception as e:      # pragma: no cover - run_preflight traps its own
+        log.warning("[%s] preflight failed (continuing run): %s", ctx.run_id, e)
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +617,15 @@ async def run_pipeline(
         # the image when --provision is passed. Fail-open (see helper). Runs
         # first so ctx.project_env reaches Recon and everything after it.
         _provision_environment(ctx, db, build=provision)
+
+        # ---- Stage 0b: preflight — CAN this run do what it is about to assume?
+        # sandbox.resolve_execution above answered PERMISSION. This answers
+        # CAPABILITY, and the difference is where the silent failures live: a
+        # scan running in a container without the target's dependencies still
+        # produces a normal-looking report in which every "proven" finding is
+        # a static guess. Cheap, deterministic, never blocks — it makes the
+        # degradation visible and carries it to the report.
+        _run_preflight(ctx)
 
         # ---- Stage 1: Recon ----
         _budget_check("recon")
