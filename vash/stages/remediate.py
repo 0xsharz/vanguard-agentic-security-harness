@@ -44,6 +44,7 @@ the deterministic guidance-only path (no LLM call).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
@@ -689,19 +690,32 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
              policy.default_action if policy.valid else "FAIL-CLOSED",
              policy.kill_switch_active() if policy.valid else "n/a")
 
-    pairs: list[tuple[Finding, dict]] = []
-    for f in findings:
-        try:
-            record = await _remediate_one(ctx, db, f, policy, out_dir)
-        except (AgentRunError, TransientAgentError) as e:
-            log.warning("[%s] remediate %s: agent failed: %s — cannot_fix "
-                        "(fail-soft)", ctx.run_id, f.finding_id, e)
-            record = _cannot_fix_record(f, f"remediation agent failed: {e}")
-        except Exception as e:  # fail-soft: one finding never aborts the batch
-            log.warning("[%s] remediate %s: unexpected error: %s — cannot_fix "
-                        "(fail-soft)", ctx.run_id, f.finding_id, e)
-            record = _cannot_fix_record(f, f"unexpected error: {e}")
-        pairs.append((f, record))
+    # Findings are independent — each gets its own workspace and its own agent —
+    # so they run concurrently, bounded by the stage's configured concurrency.
+    # (`concurrency` was declared in config/stages.yaml and silently ignored
+    # here; 13 findings ran one at a time for 33 minutes.) Results are collected
+    # by index so the report order stays deterministic regardless of finish
+    # order, and each finding still fails soft on its own.
+    sem = asyncio.Semaphore(max(1, ctx.stage("remediate").concurrency))
+    records: list[dict | None] = [None] * len(findings)
+
+    async def _one(i: int, f: Finding) -> None:
+        async with sem:
+            try:
+                records[i] = await _remediate_one(ctx, db, f, policy, out_dir)
+            except (AgentRunError, TransientAgentError) as e:
+                log.warning("[%s] remediate %s: agent failed: %s — cannot_fix "
+                            "(fail-soft)", ctx.run_id, f.finding_id, e)
+                records[i] = _cannot_fix_record(f, f"remediation agent failed: {e}")
+            except Exception as e:  # fail-soft: one finding never aborts the batch
+                log.warning("[%s] remediate %s: unexpected error: %s — cannot_fix "
+                            "(fail-soft)", ctx.run_id, f.finding_id, e)
+                records[i] = _cannot_fix_record(f, f"unexpected error: {e}")
+
+    await asyncio.gather(*(_one(i, f) for i, f in enumerate(findings)))
+    pairs: list[tuple[Finding, dict]] = [
+        (f, r) for f, r in zip(findings, records) if r is not None
+    ]
 
     # Sandbox gate refused --verify: record why on every patched finding
     # (fail-soft — the batch above already ran to completion statically).

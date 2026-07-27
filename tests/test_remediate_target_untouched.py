@@ -334,3 +334,62 @@ async def test_the_report_says_when_the_agent_edited_outside_the_finding(
     assert "backdoor.py" in md
     # and the report no longer describes the old hand-written-diff flow
     assert "disposable copy" in md
+
+
+async def test_findings_are_remediated_concurrently_and_stay_in_order(
+    tmp_path, monkeypatch
+):
+    """config/stages.yaml declares concurrency for remediate; the loop used to
+    ignore it and run one finding at a time. Report order must not depend on
+    which agent happens to finish first."""
+    import asyncio
+    target = _target(tmp_path)
+    live = 0
+    peak = 0
+
+    async def slow(*, user_input, artifact_dir, artifact_name, **_kw):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        try:
+            # later findings finish sooner, so completion order != input order
+            await asyncio.sleep(0.05 if artifact_name.endswith("3") else 0.2)
+        finally:
+            live -= 1
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        ap = artifact_dir / f"{artifact_name}.jsonl"
+        ap.write_text("{}\n")
+        return AgentResult(
+            payload={"finding_id": artifact_name, "status": "cannot_fix",
+                     "root_cause": "x", "guidance": "g", "needs_verification": True},
+            cost_usd=0.0, input_tokens=0, output_tokens=0, cache_read_tokens=0,
+            cache_creation_tokens=0, num_turns=1, duration_ms=1, session_id="s",
+            artifact_path=ap, repair_used=False,
+            raw_result_message={"usage": {}, "total_cost_usd": 0.0})
+
+    monkeypatch.setattr(remediate_mod, "run_agent", slow)
+    db = StateDB(tmp_path / "state.db")
+    try:
+        db.create_run("/t", "r1")
+        db.add_task("r1", {"task_id": "t1", "attack_class": "sql_injection",
+                           "scope_hint": "app/db.py", "target_files": ["app/db.py"],
+                           "rationale": "r", "priority": 1, "source": "recon"})
+        for n in (1, 2, 3):
+            fid = f"f{n}"
+            db.add_finding("r1", "t1", {
+                "finding_id": fid, "file": "app/db.py", "line_start": 2,
+                "line_end": 2, "vuln_class": "sql_injection", "severity": "high",
+                "cwe": "CWE-89", "description": "d" * 25, "evidence_snippet": "e",
+                "confidence": 0.9})
+            db.set_finding_validation(fid, "confirmed", {
+                "finding_id": fid, "verdict": "confirmed", "rationale": "ok",
+                "validator_confidence": 0.9})
+            db.assign_finding_group(fid, f"g{n}", True)
+        ctx = StageContext(run_id="r1", repo_path=target, config=load_config())
+        summary = await run_remediate(ctx, db, out_dir=tmp_path / "out",
+                                      policy_path=POLICY)
+    finally:
+        db.close()
+
+    assert peak > 1, "findings still ran one at a time"
+    assert [r["finding_id"] for r in summary["records"]] == ["f1", "f2", "f3"]
