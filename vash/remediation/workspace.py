@@ -145,9 +145,15 @@ def workspace_for(repo_path: Path, *,
                   max_bytes: int = DEFAULT_MAX_BYTES) -> Iterator[Path | None]:
     """Yield a disposable copy of `repo_path`, or None when one cannot be made.
 
-    The copy is removed on the way out **whatever happens** — success, an
-    exception, or a caller that returns early. A None yield means the caller
-    must degrade (guidance-only), not proceed unprotected.
+    The copy is removed on the way out on every path the interpreter controls —
+    success, an exception, or a caller that returns early. It is NOT removed if
+    the process is hard-killed (SIGTERM/SIGKILL), because no `finally` runs then;
+    a killed run leaves one copy of the target's source under the OS temp
+    directory, in a 0700 directory, for the OS to reap. Observed, not theorised:
+    `pkill` on a run mid-flight left exactly that behind.
+
+    A None yield means the caller must degrade (guidance-only), not proceed
+    unprotected.
     """
     repo_path = Path(repo_path)
     if not repo_path.is_dir():
