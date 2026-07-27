@@ -419,10 +419,11 @@ def report(run_id: str, fmt: str) -> None:
 @click.option("--out", "out_dir", default=None, type=click.Path(),
               help="Output dir (default: results/<run-id>/remediation).")
 @click.option("--verify", is_flag=True, default=False,
-              help="Run the target's tests to verify patches. Gated by the "
-                   "execution sandbox (Phase 4.1): requires VASH_SANDBOX=1 "
-                   "(or --dangerously-no-sandbox) or it's refused fail-soft. "
-                   "Real test execution is still DEFERRED regardless.")
+              help="NOT YET IMPLEMENTED — running the generated security tests "
+                   "is still deferred, so this flag verifies NOTHING today and "
+                   "patches stay needs_verification. All it exercises is the "
+                   "execution-sandbox gate (requires VASH_SANDBOX=1, or "
+                   "--dangerously-no-sandbox; a refusal is fail-soft).")
 @click.option("--dangerously-no-sandbox", "no_sandbox", is_flag=True, default=False,
               help="DEV ONLY: bypass the --verify execution-sandbox gate "
                    "(vash.sandbox.require) with a loud warning instead of an "
@@ -440,9 +441,11 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
 
     Reads the existing run's DB, enforces the VVAH policy gate (fail-closed)
     BEFORE any patch agent, and writes diffs/tests/REMEDIATION.md (all redacted).
-    Patches are generated statically and marked needs_verification. --verify
-    is gated by the execution sandbox (vash.sandbox.require) — see the
-    --dangerously-no-sandbox option above for the local-dev escape.
+    The patch agent EDITS a disposable copy of the repo and `git diff` computes
+    the diff, so patches are valid by construction; your working tree is never
+    modified and nothing is executed. Patches are marked needs_verification:
+    --verify does NOT yet run the generated tests (deferred), it only exercises
+    the execution-sandbox gate (vash.sandbox.require).
     """
     allow = _allow_api_key_from_env_or_flag(allow_api_key)
     try:
@@ -468,7 +471,9 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
                 console.print("[yellow]--dangerously-no-sandbox[/yellow] set: "
                               "--verify will bypass the execution sandbox gate "
                               "with a loud warning — DEV ONLY, unsafe against "
-                              "untrusted source")
+                              "untrusted source. Note that no test is run either "
+                              "way: real test execution is still DEFERRED, so "
+                              "nothing gets verified.")
             else:
                 console.print("[yellow]--verify requested[/yellow] — gated by "
                               "the execution sandbox: requires VASH_SANDBOX=1 "

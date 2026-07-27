@@ -257,3 +257,71 @@ async def test_a_claimed_fix_with_no_edit_is_downgraded_not_reported_as_patched(
     assert "no edit" in rec["risk_notes"]
     assert not (tmp_path / "out" / "patches" / "f1.diff").exists()
     assert summary["counts"]["patched"] == 0
+
+
+async def test_a_redacted_patch_is_never_reported_as_applying(tmp_path, monkeypatch):
+    """Redaction rewrites secrets, and a diff is position-sensitive: masking a
+    token inside a context line makes that line stop matching the file. The
+    written patch then cannot apply — so the apply-check must run on the bytes on
+    disk, not the unredacted original, and the report must say the patch was
+    masked. A hardcoded-secret finding is exactly the case that hits this."""
+    target = _target(tmp_path)
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    (target / "app" / "db.py").write_text(f'KEY = "{secret}"\n')
+
+    async def edits_a_secret(*, user_input, artifact_dir, artifact_name, **_kw):
+        ws = Path(user_input["repo_path"])
+        (ws / "app" / "db.py").write_text('KEY = os.environ["KEY"]\n')
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        ap = artifact_dir / f"{artifact_name}.jsonl"
+        ap.write_text("{}\n")
+        return AgentResult(
+            payload={"finding_id": "f1", "status": "patched",
+                     "root_cause": "hardcoded credential", "guidance": "rotate it",
+                     "needs_verification": True},
+            cost_usd=0.0, input_tokens=0, output_tokens=0, cache_read_tokens=0,
+            cache_creation_tokens=0, num_turns=1, duration_ms=1, session_id="s",
+            artifact_path=ap, repair_used=False,
+            raw_result_message={"usage": {}, "total_cost_usd": 0.0})
+
+    monkeypatch.setattr(remediate_mod, "run_agent", edits_a_secret)
+    db = StateDB(tmp_path / "state.db")
+    try:
+        _seed(db, "r1", "f1")
+        ctx = StageContext(run_id="r1", repo_path=target, config=load_config())
+        summary = await run_remediate(ctx, db, out_dir=tmp_path / "out",
+                                      policy_path=POLICY)
+    finally:
+        db.close()
+
+    rec = summary["records"][0]
+    written = (tmp_path / "out" / "patches" / "f1.diff").read_text()
+    assert secret not in written                     # the secret really is masked
+    assert rec.get("patch_redacted") is True
+    # ...and because it is masked, the report must not promise it applies.
+    assert rec.get("applies_cleanly") is not True, rec.get("apply_check")
+    md = (tmp_path / "out" / "REMEDIATION.md").read_text()
+    assert "patch redacted" in md and "not** apply verbatim" in md
+
+
+async def test_the_report_says_when_the_agent_edited_outside_the_finding(
+    tmp_path, monkeypatch
+):
+    """An out-of-scope edit is a trust signal about the agent's behaviour. It
+    belonged only to remediation.json, where nobody reading REMEDIATION.md sees
+    it."""
+    target = _target(tmp_path)
+    monkeypatch.setattr(remediate_mod, "run_agent", _hostile_agent([]))
+    db = StateDB(tmp_path / "state.db")
+    try:
+        _seed(db, "r1", "f1")
+        ctx = StageContext(run_id="r1", repo_path=target, config=load_config())
+        await run_remediate(ctx, db, out_dir=tmp_path / "out", policy_path=POLICY)
+    finally:
+        db.close()
+
+    md = (tmp_path / "out" / "REMEDIATION.md").read_text()
+    assert "outside this finding's files" in md
+    assert "backdoor.py" in md
+    # and the report no longer describes the old hand-written-diff flow
+    assert "disposable copy" in md

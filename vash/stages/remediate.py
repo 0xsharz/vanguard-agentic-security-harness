@@ -3,9 +3,17 @@
 This is a SEPARATE, opt-in command (NOT part of the scan loop) — the VASH analog
 of VulnHunter's ``/vulnhunter-fix`` split. It reads the confirmed canonical
 findings a prior scan already stored and, for each, turns the finding into a
-safe, root-cause **patch + security regression test**, generated STATICALLY: the
-agent reads code and emits a unified diff — it never executes the target to
-produce a fix.
+safe, root-cause **patch + security regression test**, generated STATICALLY — it
+never executes the target to produce a fix.
+
+The agent does not hand-write the diff. It EDITS files in a disposable copy of
+the target (:mod:`vash.remediation.workspace`) and ``git diff`` computes the
+patch, so the patch is valid by construction. The copy is the only place it can
+write, it is never told where the real repository is, ``git status`` is consulted
+as ground truth about what it actually touched, and the copy is destroyed
+afterwards — so "VASH never modifies the code under review" stays true even
+though the agent now holds a write tool. See :mod:`vash.remediation` and
+``tests/test_remediate_target_untouched.py``.
 
 Governance (ported from Visa VVAH):
   * The remediation **policy gate** (:mod:`vash.remediation_policy`) runs BEFORE
@@ -23,7 +31,8 @@ Static-first guardrails (OVERRIDE defaults):
     completes); with a sandbox present (or the escape), it proceeds to the
     still-DEFERRED notice below. Either way NO target code is executed yet
     and patches stay ``needs_verification``.
-  * v1 writes diffs only — it does NOT apply patches to the working tree.
+  * Diffs are written to ``out_dir``; they are NEVER applied to your tree.
+  * Editing is not executing: the remediate agent gets no ``Bash``.
   * Every written artifact is redacted via :mod:`vash.redact`.
   * Fail-soft per finding — one finding's failure never aborts the batch.
 
@@ -459,9 +468,19 @@ def _check_patch_applies(diff: str, repo_path: Path) -> tuple[bool | None, str]:
     return False, detail
 
 
-def _write_patch_and_test(record: dict, patches_dir: Path, tests_dir: Path) -> None:
+def _write_patch_and_test(record: dict, patches_dir: Path,
+                          tests_dir: Path) -> str:
     """Persist a record's diff + test to disk, REDACTED. No file is written for
-    an empty diff/test (so denied/guidance findings produce no diff file)."""
+    an empty diff/test (so denied/guidance findings produce no diff file).
+
+    Returns the diff text **as actually written** — which is not always the diff
+    on the record. Redaction rewrites secrets, and a diff is position-sensitive:
+    masking a token inside a context line makes that line stop matching the file,
+    so the written patch no longer applies. The caller must run the apply-check
+    against these bytes, not the unredacted original, or the report would promise
+    "applies cleanly" for a file that cannot. This is not a corner case — a
+    hardcoded-secret finding is exactly the one whose fix touches a secret.
+    """
     fid = record["finding_id"]
     diff = (record.get("patch_diff") or "")
     if diff.strip():
@@ -475,18 +494,27 @@ def _write_patch_and_test(record: dict, patches_dir: Path, tests_dir: Path) -> N
             record["status"] = "guidance_only"
             record["patch_withheld"] = f"diff targeted unsafe paths: {', '.join(unsafe)}"
             record["patch_diff"] = ""
-            return
+            return ""
         diff, corrected = _normalize_hunk_counts(diff)
         if corrected:
             record["patch_diff"] = diff
             record["hunk_headers_corrected"] = corrected
             log.info("[remediate] %s: repaired %d hunk header(s) whose line "
                      "counts disagreed with the body", fid, corrected)
-        (patches_dir / f"{fid}.diff").write_text(redact(diff))
+        written = redact(diff)
+        if written != diff:
+            record["patch_redacted"] = True
+            log.warning("[remediate] %s: the patch contained a secret, so the "
+                        "written .diff is redacted and will NOT apply verbatim "
+                        "— apply the change by hand", fid)
+        (patches_dir / f"{fid}.diff").write_text(written)
+    else:
+        written = ""
     test = (record.get("security_test") or "")
     if test.strip():
         ext = _test_ext(record.get("test_path"))
         (tests_dir / f"{fid}_test{ext}").write_text(redact(test))
+    return written
 
 
 def _evidence_preview(f: Finding, limit: int = 1200) -> str:
@@ -509,9 +537,24 @@ def _render_one(lines: list[str], f: Finding, record: dict) -> None:
     elif applies is False:
         lines.append(f"- **applies cleanly**: **NO** — {record.get('apply_check', 'rejected')}. "
                      "Treat the diff as guidance and apply the change by hand.")
+    if record.get("patch_redacted"):
+        lines.append("- **patch redacted**: the diff contained a secret, so the "
+                     "written `.diff` is masked and will **not** apply verbatim — "
+                     "make the change by hand using the root cause below.")
     if record.get("hunk_headers_corrected"):
         lines.append(f"- _note: {record['hunk_headers_corrected']} hunk header(s) had "
                      "line counts that disagreed with the body; recomputed before writing._")
+    # What the agent did beyond this finding. An unreverted out-of-scope edit is
+    # the one case where the patch may carry an unrelated change, so it is said
+    # out loud rather than left in the JSON.
+    if record.get("out_of_scope_edits_unreverted"):
+        lines.append("- **⚠ out-of-scope edits could NOT be reverted**: "
+                     f"`{'`, `'.join(record['out_of_scope_edits_unreverted'])}` — "
+                     "this patch may contain an unrelated change; review it before applying.")
+    if record.get("out_of_scope_edits_reverted"):
+        lines.append("- _the agent also edited "
+                     f"`{'`, `'.join(record['out_of_scope_edits_reverted'])}`, "
+                     "outside this finding's files; reverted before the patch was built._")
     lines.append("")
     if record.get("root_cause"):
         lines.append(f"**Root cause**: {record['root_cause']}")
@@ -522,7 +565,8 @@ def _render_one(lines: list[str], f: Finding, record: dict) -> None:
     lines.append("```")
     lines.append("")
     if status == "patched" and (record.get("patch_diff") or "").strip():
-        lines.append("**Patch (unified diff — not applied, not executed):**")
+        lines.append("**Patch** (computed by `git diff` from edits to a "
+                     "throwaway copy — not applied to your tree, not executed):")
         lines.append("```diff")
         lines.append(record["patch_diff"])
         lines.append("```")
@@ -564,10 +608,12 @@ def _render_markdown(run_id: str, pairs: list[tuple[Finding, dict]], policy,
     lines: list[str] = []
     lines.append(f"# Remediation — `{run_id}`")
     lines.append("")
-    lines.append("_Generated statically by `vash remediate`. Patches are unified "
-                 "diffs produced by reading code — they were NOT executed and were "
-                 "NOT applied to the working tree. Every patch is "
-                 "`needs_verification=true` until a sandbox run confirms it._")
+    lines.append("_Generated statically by `vash remediate`. Each patch was "
+                 "produced by editing a **disposable copy** of the repository and "
+                 "letting `git diff` compute the diff — your working tree was "
+                 "never modified and nothing was executed. Patches are NOT applied "
+                 "for you. Every patch is `needs_verification=true` until a "
+                 "sandbox run confirms it._")
     lines.append("")
     policy_state = "valid" if policy.valid else "INVALID — fail-closed (guidance only)"
     if policy.valid and policy.kill_switch_active():
@@ -664,11 +710,12 @@ async def run_remediate(ctx: StageContext, db: StateDB, *, out_dir: Path,
 
     # Persist per-finding diff + test (redacted). Guidance/cannot_fix -> no diff.
     for _f, record in pairs:
-        _write_patch_and_test(record, patches_dir, tests_dir)
+        written = _write_patch_and_test(record, patches_dir, tests_dir)
         # A patch that does not apply still LOOKS like a fix in the report, so
-        # say which ones do. Read-only, fail-soft: unknown stays unknown.
-        applies, detail = _check_patch_applies(
-            record.get("patch_diff") or "", ctx.repo_path)
+        # say which ones do — checking the bytes on disk, since redaction can
+        # rewrite a context line and break an otherwise-valid patch. Read-only,
+        # fail-soft: unknown stays unknown.
+        applies, detail = _check_patch_applies(written, ctx.repo_path)
         if applies is not None:
             record["applies_cleanly"] = applies
             record["apply_check"] = detail

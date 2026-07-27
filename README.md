@@ -226,7 +226,7 @@ Generates policy-gated, root-cause patches for the confirmed findings, plus a se
 test for each. **Your repository is never modified and never executed.**
 
 ```bash
-vash remediate --run-id ID [--repo PATH] [--policy FILE] [--out DIR] [--verify]
+vash remediate --run-id ID [--repo PATH] [--policy FILE] [--out DIR]
 ```
 
 **How the patch is made.** Asking a model to *type out* a unified diff is asking it to do
@@ -257,7 +257,13 @@ The agent still gets no shell: editing a file is not executing it. Each patch is
 with `git apply --check` against your real tree (a read-only operation) and reported as
 applying or not — and a finding the agent *claimed* to fix without making an edit is
 downgraded to guidance rather than reported as patched. Every patch is marked
-`needs_verification` until a sandbox run confirms it.
+`needs_verification`: VASH generates the security test but does **not** run it yet,
+so nothing here claims to be verified. (A `--verify` flag exists but is honest
+about doing nothing — running the tests is not implemented.)
+
+If a patch touches a secret, the written `.diff` is redacted — which means it will
+not apply verbatim. The report says so per finding rather than letting the
+apply-check vouch for bytes that were never written.
 
 > **📎 [Read a real one →](docs/example-remediation.md)** — the remediation for the demo
 > scan above: 7 findings, 7 patches, 7 tests. The command-injection fix replaces
