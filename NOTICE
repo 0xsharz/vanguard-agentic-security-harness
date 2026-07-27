@@ -31,8 +31,12 @@ Visa VVAH (visa-vulnerability-agentic-harness)  —  Apache License 2.0
     and the secret/PII/PAN redaction module (vash/redact.py).
     Adapted (not verbatim): deterministic entry→sink taint-path chunking, gated
     specialist passes, catch-all coverage eligibility, exploit-chain
-    construction, the remediation policy hard-gates, and the remediation diff
-    path-safety guard (rejecting absolute / `..` / drive / UNC targets).
+    construction, the remediation policy hard-gates, the remediation diff
+    path-safety guard (rejecting absolute / `..` / drive / UNC targets), the
+    edit-then-diff remediation flow with its post-run revert of out-of-scope
+    edits (vash/remediation/), and the remediation prompt's evidence gates and
+    authoritative fix rules (prompts/remediate.md, from
+    remediation_agent/prompts.py).
     License: licenses/VVAH-Apache-2.0.txt
 
 Changes were made to all reused portions to adapt them to VASH's Python,
