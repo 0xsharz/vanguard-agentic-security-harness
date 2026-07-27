@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +104,16 @@ def _revert(workspace: Path, rel: str) -> bool:
 
 
 def _norm(p: str) -> str:
-    return Path(p.split(":", 1)[0]).as_posix().lstrip("./")
+    """A path in one canonical form, for comparing scope.
+
+    Strips a `:line` suffix and collapses a leading `./`. Note what this must
+    NOT do: `str.lstrip("./")` strips a CHARACTER SET, not a prefix, so it turns
+    `.env` into `env` and `.github/ci.yml` into `github/ci.yml`. A finding whose
+    file is named `env` would then match an edit to `.env` — quietly admitting a
+    secrets file into the patch. PurePosixPath collapses `.` segments without
+    touching a leading dot in a name.
+    """
+    return PurePosixPath(p.split(":", 1)[0].strip()).as_posix()
 
 
 def enforce(workspace: Path, allowed_files: list[str], *,

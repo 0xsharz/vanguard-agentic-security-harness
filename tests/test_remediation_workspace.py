@@ -291,3 +291,18 @@ def test_a_symlink_that_stays_inside_the_repo_is_preserved(tmp_path):
     with workspace_for(repo) as ws:
         assert (ws / "alias.py").is_symlink()
         assert (ws / "alias.py").read_text().startswith("def read")
+
+
+def test_a_dotfile_is_not_confused_with_its_undotted_namesake(tmp_path):
+    """`str.lstrip("./")` strips a character SET, not a prefix, so `.env`
+    normalised to `env`. A finding whose file is named `env` would then match an
+    edit to `.env` and admit a secrets file into the patch."""
+    repo = _repo(tmp_path)
+    (repo / "env").write_text("PORT=1\n")
+    (repo / ".env").write_text("TOKEN=real\n")
+    with workspace_for(repo) as ws:
+        (ws / ".env").write_text("TOKEN=leaked\n")
+        res = enforce(ws, ["env"])                    # the finding covers `env`
+        assert res.reverted == [".env"]               # not treated as the same file
+        assert (ws / ".env").read_text() == "TOKEN=real\n"
+        assert capture_diff(ws, ["env"]) is None      # and it never reaches the patch
