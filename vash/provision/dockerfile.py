@@ -142,14 +142,50 @@ ECOSYSTEM_TEMPLATES: dict[str, dict] = {
         "test": "poetry run pytest -q || true",
         "deps": _PIP_DEPS_PROBE,
     },
+    "uv": {
+        "base": "python:{ver}-slim",
+        "default_ver": "3.11",
+        "ver_key": "python",
+        # Installed --system, NOT into uv's default `.venv`. A PoC runs
+        # `python3 poc.py`, which resolves to the system interpreter; deps in a
+        # project venv would be invisible to it and every import would fail —
+        # the mirror image of the scan-image rule that VASH's own venv must
+        # never be on PATH.
+        #
+        # `uv export` is what makes this work with the existing pip deps probe:
+        # it writes the lock out as a requirements.txt the probe already knows
+        # how to check, so an image that builds without the target's
+        # dependencies is still caught rather than reported as a success.
+        #
+        # git + ca-certificates because a lockfile routinely carries a
+        # `pkg @ git+https://...` dependency, and python:slim ships neither.
+        "install": (
+            "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+            "        git ca-certificates \\\n"
+            "    && rm -rf /var/lib/apt/lists/*\n"
+            "RUN pip install uv \\\n"
+            "    && (uv export --frozen --no-dev --no-hashes --no-emit-project \\\n"
+            "            -o requirements.txt \\\n"
+            "        || uv export --no-dev --no-hashes -o requirements.txt || true) \\\n"
+            "    && (if [ -s requirements.txt ]; then \\\n"
+            "            uv pip install --system -r requirements.txt || true; fi) \\\n"
+            "    && (uv pip install --system --no-deps -e . || pip install -e . || true)"
+        ),
+        "build": "python -c \"import sys; print(sys.version)\"",
+        "test": "pytest -q || true",
+        "deps": _PIP_DEPS_PROBE,
+    },
 }
 
 # preference order when a repo declares several ecosystems.
 # pnpm/yarn before npm: all three are proven by a package.json, but the
 # lockfile-specific one is what the repo actually uses, and installing a pnpm
 # workspace with npm silently produces an empty node_modules.
+# uv and poetry outrank pip: each is proven by its own lockfile, and a repo
+# carrying one also carries a pyproject.toml (which now maps to pip), so the
+# more specific tool has to win or the lock would never be used.
 _PRIORITY = ["maven", "gradle", "pnpm", "yarn", "npm", "go-modules", "dotnet",
-             "pip", "poetry"]
+             "uv", "poetry", "pip"]
 
 # ecosystem -> language it belongs to, so _pick_ecosystem can prefer the
 # ecosystem matching the repo's dominant language over one from a vendored
@@ -157,7 +193,7 @@ _PRIORITY = ["maven", "gradle", "pnpm", "yarn", "npm", "go-modules", "dotnet",
 _ECOSYSTEM_LANG = {
     "npm": "javascript", "yarn": "javascript", "pnpm": "javascript",
     "maven": "java", "gradle": "java", "go-modules": "go",
-    "dotnet": "csharp", "pip": "python", "poetry": "python",
+    "dotnet": "csharp", "pip": "python", "poetry": "python", "uv": "python",
 }
 
 

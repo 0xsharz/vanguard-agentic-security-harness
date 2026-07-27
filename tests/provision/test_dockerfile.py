@@ -64,10 +64,49 @@ def test_no_known_ecosystem_returns_none(tmp_path):
 
 
 def test_templates_poetry_pyproject_python(tmp_path):
-    repo = _mk(tmp_path, {"app.py": "x=1\n", "pyproject.toml": "[tool.poetry]\nname='x'\n"})
+    repo = _mk(tmp_path, {"app.py": "x=1\n", "pyproject.toml": "[tool.poetry]\nname='x'\n",
+                          "poetry.lock": "# lock\n"})
     r = render_dockerfile(fingerprint(repo), repo)
     assert r.source == "template"
     assert "python:" in r.dockerfile
+    assert "poetry install" in r.dockerfile
+
+
+def test_uv_lock_picks_uv_not_poetry(tmp_path):
+    """uv.lock is proof of the tool. Before this, `pyproject.toml` alone meant
+    poetry, so a uv project got `poetry install` — which fails outright on a
+    PEP-621 project with no [tool.poetry] table (observed on
+    worldbank/data360-mcp, whose CI and startup.sh both say `uv`)."""
+    repo = _mk(tmp_path, {
+        "app.py": "x=1\n",
+        "pyproject.toml": "[project]\nname='x'\ndependencies=['requests']\n",
+        "uv.lock": "version = 1\n",
+    })
+    fp = fingerprint(repo)
+    assert "uv" in fp.build_systems
+    r = render_dockerfile(fp, repo)
+    assert "uv pip install --system" in r.dockerfile
+    assert "poetry" not in r.dockerfile
+    # deps must land on the SYSTEM interpreter: a PoC runs `python3 poc.py`,
+    # which would never see a project-local .venv.
+    assert "--system" in r.dockerfile
+    # and the lock is exported so the existing pip deps probe can check it
+    assert "uv export" in r.dockerfile
+
+
+def test_bare_pep621_pyproject_is_pip_not_poetry(tmp_path):
+    """The general case behind the same bug: setuptools/hatch/flit projects all
+    ship a pyproject.toml and none of them are poetry. pip handles PEP-621."""
+    repo = _mk(tmp_path, {
+        "app.py": "x=1\n",
+        "pyproject.toml": ("[project]\nname='x'\n\n[build-system]\n"
+                           "requires=['setuptools']\n"),
+    })
+    fp = fingerprint(repo)
+    assert "pip" in fp.build_systems and "poetry" not in fp.build_systems
+    r = render_dockerfile(fp, repo)
+    assert "pip install -e ." in r.dockerfile
+    assert "poetry" not in r.dockerfile
 
 
 def test_primary_language_wins_over_vendored_manifest(tmp_path):

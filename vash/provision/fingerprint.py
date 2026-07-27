@@ -20,8 +20,15 @@ BUILD_SYSTEM_MARKERS: dict[str, list[str]] = {
     "maven": ["pom.xml"],
     "gradle": ["build.gradle", "build.gradle.kts", "settings.gradle"],
     "go-modules": ["go.mod"],
-    "pip": ["requirements.txt", "setup.py", "setup.cfg"],
-    "poetry": ["pyproject.toml"],
+    # A bare `pyproject.toml` is PEP-621, not poetry. Mapping it to poetry built
+    # `poetry install` images for setuptools/hatch/uv projects with no
+    # `[tool.poetry]` table at all — the install failed, `|| true` swallowed it,
+    # and the image came out with none of the target's dependencies. Each python
+    # packaging tool is now claimed by its own lockfile, and pyproject.toml falls
+    # to pip, which handles PEP-621 correctly with `pip install -e .`.
+    "pip": ["requirements.txt", "setup.py", "setup.cfg", "pyproject.toml"],
+    "poetry": ["poetry.lock"],
+    "uv": ["uv.lock"],
     "cargo": ["Cargo.toml"],
     "bundler": ["Gemfile"],
     "composer": ["composer.json"],
