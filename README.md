@@ -256,10 +256,23 @@ Three independent things keep that true, none of which rely on the model behavin
 The agent still gets no shell: editing a file is not executing it. Each patch is checked
 with `git apply --check` against your real tree (a read-only operation) and reported as
 applying or not — and a finding the agent *claimed* to fix without making an edit is
-downgraded to guidance rather than reported as patched. Every patch is marked
-`needs_verification`: VASH generates the security test but does **not** run it yet,
-so nothing here claims to be verified. (A `--verify` flag exists but is honest
-about doing nothing — running the tests is not implemented.)
+downgraded to guidance rather than reported as patched.
+
+By default the agent still gets no shell and nothing is executed, so every patch is
+marked `needs_verification`. **`--verify`** (opt-in, and gated by the same execution
+sandbox as PoC running) is what clears it: the generated security test is run twice
+inside the disposable copy — once against the patch, once against the restored
+baseline — and only a test that is **RED without the fix and GREEN with it** counts
+as verified. A test that passes without the patch doesn't exercise the bug, and says
+so.
+
+The honest part is the third outcome. The copy carries your source but not your
+installed dependencies, so a test can fail at `import` for reasons that have nothing
+to do with the vulnerability — and an import error misread as a failing test would
+report *every* such project as proven vulnerable. Those are separated at the runner
+level and reported as `not_attempted`, which is stated in the report as evidence for
+neither side. Python and JavaScript tests are run; other languages are reported
+`not_attempted` rather than guessed at.
 
 If a patch touches a secret, the written `.diff` is redacted — which means it will
 not apply verbatim. The report says so per finding rather than letting the
@@ -356,6 +369,8 @@ execution_enabled = --dynamic-validation  AND  (inside a sandbox  OR  --dangerou
 | **Static** (default) | `vash run --repo …` | Pure reasoning + call-graph taint. Never runs target code — safe on untrusted repos. |
 | **Dynamic** | `vash run --repo … --dynamic-validation` *(in Docker/`VASH_SANDBOX=1`)* | Writes & runs a real PoC per candidate in the sandbox; keeps only what fires. |
 | **Refused** | `--dynamic-validation` on a bare host | **Fails fast** with a clear remedy — never silently executes on the host. |
+
+**`vash remediate --verify`** is the third path that executes anything, and it passes the same gate (`sandbox.require()`): with no sandbox and no `--dangerously-no-sandbox` it is refused fail-soft — the static patches are still delivered, and nothing runs. What it executes is the security test VASH generated, inside the disposable copy of your repo, never in your working tree.
 
 **Provisioning** (`--provision` / `vash provision --build`) is the one other path that runs target-authored instructions — a target's build is its own code (`npm ci` runs postinstall scripts, `mvn package` runs plugins). It is opt-in, and every command it issues executes **inside a container, never on the host**; the verify step additionally runs with `--network none`, `no-new-privileges` and cpu/memory/pid caps. Fingerprinting and Dockerfile rendering (the default, flagless path) are pure text analysis and execute nothing.
 
