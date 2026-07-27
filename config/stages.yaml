@@ -50,12 +50,17 @@ stages:
     tools: [Read]
   remediate:
     # Decoupled, opt-in `vash remediate` (NOT part of the scan loop). Patch
-    # generation is high-stakes -> strong model. Read-only tools ONLY: the
-    # agent reads code and emits a unified diff + a security test as JSON; it
-    # NEVER executes the target (static-first). No Bash, no Write.
+    # generation is high-stakes -> strong model. The agent EDITS files and git
+    # computes the diff, so the patch is valid by construction instead of being
+    # hand-written (which produced "corrupt patch" rejections).
     model: claude-opus-4-8
     concurrency: 4
-    tools: [Read, Grep, Glob]
+    # Write/Edit apply to a DISPOSABLE COPY of the target, never the target
+    # itself (vash/remediation/workspace.py) — the agent is never told where the
+    # real repository is. git then computes the diff from those edits, so the
+    # patch is valid by construction. Still NO Bash: remediation edits, it does
+    # not execute.
+    tools: [Read, Grep, Glob, Write, Edit]
     repair_attempts: 2
   revalidate:
     # Decoupled, opt-in `vash validate` (NOT part of the scan loop; Phase 6).

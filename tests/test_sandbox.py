@@ -165,6 +165,13 @@ PATCH_PAYLOAD = {
 
 def _fake_run_agent_factory(payload: dict):
     async def fake_run_agent(*, user_input, artifact_dir, artifact_name, **_kw) -> AgentResult:
+        # The patch agent now EDITS files in the disposable workspace and git
+        # computes the diff, so a stub must edit to produce one.
+        ws = Path(user_input["repo_path"])
+        for rel in (user_input.get("editable_files") or []):
+            t = ws / rel.split(":", 1)[0]
+            t.parent.mkdir(parents=True, exist_ok=True)
+            t.write_text("# patched\n" + (t.read_text() if t.is_file() else ""))
         artifact_dir.mkdir(parents=True, exist_ok=True)
         ap = artifact_dir / f"{artifact_name}.jsonl"
         ap.write_text("{}\n")

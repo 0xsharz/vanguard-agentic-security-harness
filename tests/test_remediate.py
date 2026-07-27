@@ -196,9 +196,24 @@ PATCH_PAYLOAD = {
 }
 
 
-def _fake_run_agent_factory(captured: list[dict], payload: dict):
+def _fake_run_agent_factory(captured: list[dict], payload: dict, *, edits: bool = True):
+    """A stub standing in for the patch agent.
+
+    The real agent now EDITS files in the workspace and git computes the diff,
+    so a stub that only returns a `patch_diff` string models an agent that
+    described a change it never made — which VASH deliberately discards. Set
+    `edits=False` to exercise exactly that case.
+    """
     async def fake_run_agent(*, user_input, artifact_dir, artifact_name, **_kw) -> AgentResult:
         captured.append(user_input)
+        if edits:
+            # Edit the finding's file inside the workspace, as a real agent does.
+            ws = Path(user_input["repo_path"])
+            for rel in (user_input.get("editable_files") or []):
+                target = ws / rel.split(":", 1)[0]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("# patched by the stub agent\n"
+                                  + (target.read_text() if target.is_file() else ""))
         artifact_dir.mkdir(parents=True, exist_ok=True)
         ap = artifact_dir / f"{artifact_name}.jsonl"
         ap.write_text("{}\n")

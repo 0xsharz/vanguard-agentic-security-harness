@@ -49,6 +49,7 @@ from vash.remediation_policy import (
     load_policy,
 )
 from vash.runner import AgentRunError, TransientAgentError, run_agent
+from vash.remediation import capture_diff, enforce, workspace_for
 from vash.state import Finding, StateDB
 from vash.stages._common import StageContext
 
@@ -210,6 +211,19 @@ def _cannot_fix_record(f: Finding, note: str) -> dict:
     return rec
 
 
+def _finding_files(f: Finding) -> list[str]:
+    """The files this finding is about — the only ones the agent may edit.
+
+    Anything else it touches is reverted by the post-gate. Sourced from the
+    finding's own file plus any files_touched the hunter recorded.
+    """
+    files = [f.file]
+    for extra in (f.raw_json.get("files_touched") or []):
+        if isinstance(extra, str) and extra not in files:
+            files.append(extra)
+    return [x for x in files if x]
+
+
 async def _remediate_one(ctx: StageContext, db: StateDB, f: Finding, policy,
                          out_dir: Path) -> dict:
     """Policy-gate one finding, then either emit a guidance-only record (denied)
@@ -223,39 +237,88 @@ async def _remediate_one(ctx: StageContext, db: StateDB, f: Finding, policy,
         return _guidance_record(f, cwe, cls, policy)
 
     sc = ctx.stage("remediate")
-    user_input = {
-        "finding": _finding_view(f, cwe),
-        "vuln_class_family": cls,
-        "trace": db.get_trace(f.finding_id) or {},
-        "repo_path": str(ctx.repo_path),
-        **ctx.extras(),
-    }
-    result = await run_agent(
-        stage="remediate",
-        prompt_file=ctx.prompt("remediate"),
-        user_input=user_input,
-        schema_file=ctx.schema("remediation"),
-        allowed_tools=sc.tools,
-        model=sc.model,
-        cwd=ctx.repo_path,
-        add_dirs=[ctx.repo_path],
-        max_turns=sc.max_turns,
-        permission_mode=sc.permission_mode,
-        artifact_dir=out_dir / "agent",
-        artifact_name=f.finding_id,
-        repair_attempts=sc.repair_attempts,
-    )
-    db.record_cost(ctx.run_id, "remediate", f.finding_id, result.raw_result_message)
-    db.add_artifact(ctx.run_id, "remediate", f.finding_id, "jsonl",
-                    str(result.artifact_path))
+    finding_files = _finding_files(f)
 
-    payload = dict(result.payload)
+    # The agent EDITS files and git computes the diff, so the patch is valid by
+    # construction. It edits a DISPOSABLE COPY and is never told where the real
+    # repository is — `cwd`/`add_dirs` below are the workspace, never
+    # ctx.repo_path. That is what keeps "VASH never modifies your code" true
+    # while the agent holds a write tool.
+    with workspace_for(ctx.repo_path) as workspace:
+        if workspace is None:
+            # No safe place to edit -> guidance, never an unprotected edit.
+            rec = _guidance_record(f, cwe, cls, policy)
+            rec["guidance"] = (
+                "Could not create an isolated workspace for this repository "
+                "(too large, or unreadable), so no patch was generated. "
+                + (rec.get("guidance") or "")
+            ).strip()
+            return rec
+
+        user_input = {
+            "finding": _finding_view(f, cwe),
+            "vuln_class_family": cls,
+            "trace": db.get_trace(f.finding_id) or {},
+            "repo_path": str(workspace),          # the copy — never the target
+            "editable_files": finding_files,
+            **ctx.extras(),
+        }
+        result = await run_agent(
+            stage="remediate",
+            prompt_file=ctx.prompt("remediate"),
+            user_input=user_input,
+            schema_file=ctx.schema("remediation"),
+            allowed_tools=sc.tools,
+            model=sc.model,
+            cwd=workspace,
+            add_dirs=[workspace],
+            max_turns=sc.max_turns,
+            permission_mode=sc.permission_mode,
+            artifact_dir=out_dir / "agent",
+            artifact_name=f.finding_id,
+            repair_attempts=sc.repair_attempts,
+        )
+        db.record_cost(ctx.run_id, "remediate", f.finding_id, result.raw_result_message)
+        db.add_artifact(ctx.run_id, "remediate", f.finding_id, "jsonl",
+                        str(result.artifact_path))
+
+        payload = dict(result.payload)
+
+        # Ask git what the agent ACTUALLY changed, not what it says it changed,
+        # and undo anything outside this finding's files before diffing.
+        gate = enforce(workspace, finding_files,
+                       expected_extra=[payload.get("test_path") or ""])
+        if gate.expected:
+            payload["security_test_written_to"] = gate.expected
+        if gate.reverted:
+            payload["out_of_scope_edits_reverted"] = gate.reverted
+        if gate.errors:
+            payload["out_of_scope_edits_unreverted"] = gate.errors
+
+        captured = capture_diff(workspace, finding_files)
+        if captured:
+            payload["patch_diff"] = captured
+        elif (payload.get("patch_diff") or "").strip():
+            # The agent described a change it did not make. Trust the workspace.
+            log.warning("[%s] remediate: %s returned a diff but edited nothing — "
+                        "discarding it", ctx.run_id, f.finding_id)
+            payload["patch_diff"] = ""
     payload["finding_id"] = f.finding_id             # authoritative
     payload["needs_verification"] = True             # --verify deferred -> always true
+    has_diff = bool((payload.get("patch_diff") or "").strip())
     if payload.get("status") not in ("patched", "cannot_fix"):
         # Never silently mint a patch: derive status from whether a diff exists.
-        payload["status"] = "patched" if (payload.get("patch_diff") or "").strip() \
-            else "cannot_fix"
+        payload["status"] = "patched" if has_diff else "cannot_fix"
+    elif payload.get("status") == "patched" and not has_diff:
+        # "patched" with nothing to apply is the report reading as a fix when
+        # nothing was fixed. The analysis is still worth delivering; the claim
+        # is not.
+        payload["status"] = "guidance_only"
+        payload["risk_notes"] = (
+            "Reported as patched, but the agent made no edit to this finding's "
+            "files, so there is no patch. The analysis below is unverified. "
+            + (payload.get("risk_notes") or "")
+        ).strip()
     n = _normalize_cwe(cwe)
     if n is not None and not payload.get("cwe"):
         payload["cwe"] = n
@@ -281,6 +344,13 @@ _HUNK_HDR = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
 
 def _normalize_hunk_counts(diff: str) -> tuple[str, int]:
     """Rewrite each hunk header's line counts to match its body.
+
+    **This is now a fallback, not the main path.** Patches are produced by
+    `git diff` over the agent's edits, so their headers are correct by
+    construction and this is expected to correct nothing. It is kept because a
+    diff can still arrive from an older run's stored record, and because a
+    correction firing here is a useful signal that something bypassed the
+    edit-then-diff flow.
 
     Returns (normalized_diff, hunks_corrected). Start line numbers are left
     alone: those encode WHERE the hunk applies and cannot be re-derived from the
