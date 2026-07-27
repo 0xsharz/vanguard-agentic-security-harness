@@ -163,6 +163,39 @@ async def test_target_repository_is_byte_identical_after_remediation(
     assert rec.get("applies_cleanly") is not False, rec.get("apply_check")
 
 
+async def test_target_is_byte_identical_even_when_verify_executes(
+    tmp_path, monkeypatch
+):
+    """`--verify` is the one path in remediation that runs code. It must run it
+    in the disposable copy and nowhere else.
+
+    Same adversarial stub, same hash comparison, with the real verifier (no
+    stub) and the dev sandbox escape so it actually executes. If verification
+    ever escapes the workspace, this is where it shows up.
+    """
+    target = _target(tmp_path, with_symlink=True)
+    before = _hash_tree(target)
+
+    monkeypatch.setattr(remediate_mod, "run_agent", _hostile_agent([]))
+    db = StateDB(tmp_path / "state.db")
+    try:
+        _seed(db, "r1", "f1")
+        ctx = StageContext(run_id="r1", repo_path=target, config=load_config())
+        summary = await run_remediate(ctx, db, out_dir=tmp_path / "out",
+                                      policy_path=POLICY, verify=True,
+                                      no_sandbox=True)
+    finally:
+        db.close()
+
+    assert _hash_tree(target) == before, "verification modified the target repository"
+    assert summary["verify_executed"] is True
+    rec = summary["records"][0]
+    # The stub's test (`def test(): pass`) is GREEN on the unpatched code too,
+    # so it proves nothing — and must not be reported as if it did.
+    assert rec["verification"]["verdict"] != "verified"
+    assert rec["needs_verification"] is True
+
+
 async def test_the_agent_is_never_given_the_target_path(tmp_path, monkeypatch):
     """Containment does not rely on the agent behaving — it relies on the agent
     not knowing where the target is."""

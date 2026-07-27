@@ -419,11 +419,14 @@ def report(run_id: str, fmt: str) -> None:
 @click.option("--out", "out_dir", default=None, type=click.Path(),
               help="Output dir (default: results/<run-id>/remediation).")
 @click.option("--verify", is_flag=True, default=False,
-              help="NOT YET IMPLEMENTED — running the generated security tests "
-                   "is still deferred, so this flag verifies NOTHING today and "
-                   "patches stay needs_verification. All it exercises is the "
-                   "execution-sandbox gate (requires VASH_SANDBOX=1, or "
-                   "--dangerously-no-sandbox; a refusal is fail-soft).")
+              help="EXECUTES the generated security test for each patched "
+                   "finding, twice inside the disposable workspace (patched vs "
+                   "unpatched); only RED->GREEN clears needs_verification. "
+                   "Gated by the execution sandbox (requires VASH_SANDBOX=1, or "
+                   "--dangerously-no-sandbox; a refusal is fail-soft). Python "
+                   "and JavaScript tests only — anything else, or a test that "
+                   "cannot run for want of the target's dependencies, is "
+                   "reported not_attempted rather than guessed at.")
 @click.option("--dangerously-no-sandbox", "no_sandbox", is_flag=True, default=False,
               help="DEV ONLY: bypass the --verify execution-sandbox gate "
                    "(vash.sandbox.require) with a loud warning instead of an "
@@ -443,9 +446,9 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
     BEFORE any patch agent, and writes diffs/tests/REMEDIATION.md (all redacted).
     The patch agent EDITS a disposable copy of the repo and `git diff` computes
     the diff, so patches are valid by construction; your working tree is never
-    modified and nothing is executed. Patches are marked needs_verification:
-    --verify does NOT yet run the generated tests (deferred), it only exercises
-    the execution-sandbox gate (vash.sandbox.require).
+    modified. Patch generation executes nothing. Patches are marked
+    needs_verification unless --verify (sandbox-gated) runs the generated
+    security test and it goes RED->GREEN.
     """
     allow = _allow_api_key_from_env_or_flag(allow_api_key)
     try:
@@ -470,16 +473,16 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
             if no_sandbox:
                 console.print("[yellow]--dangerously-no-sandbox[/yellow] set: "
                               "--verify will bypass the execution sandbox gate "
-                              "with a loud warning — DEV ONLY, unsafe against "
-                              "untrusted source. Note that no test is run either "
-                              "way: real test execution is still DEFERRED, so "
-                              "nothing gets verified.")
+                              "with a loud warning and RUN the generated "
+                              "security tests on this host — DEV ONLY, unsafe "
+                              "against source you do not already trust.")
             else:
-                console.print("[yellow]--verify requested[/yellow] — gated by "
-                              "the execution sandbox: requires VASH_SANDBOX=1 "
-                              "(or --dangerously-no-sandbox) or it's refused "
-                              "fail-soft. Real test execution itself remains "
-                              "DEFERRED either way.")
+                console.print("[yellow]--verify requested[/yellow] — the "
+                              "generated security tests will be EXECUTED in a "
+                              "disposable copy. Gated by the execution sandbox: "
+                              "requires VASH_SANDBOX=1 (or "
+                              "--dangerously-no-sandbox), else refused "
+                              "fail-soft and nothing is run.")
 
         summary = asyncio.run(run_remediate(
             ctx, db, out_dir=out, policy_path=policy, verify=verify,
@@ -494,6 +497,17 @@ def remediate(run_id: str, repo: str | None, policy_path: str | None,
             f"patched={c['patched']} guidance_only={c['guidance_only']} "
             f"cannot_fix={c['cannot_fix']} (of {summary['total']})"
         )
+        if summary.get("verify_executed"):
+            v = summary["verify_counts"]
+            console.print(
+                f"verification: [green]{v['verified']} verified[/green] "
+                f"(RED→GREEN), {v['not_verified']} not verified, "
+                f"{v['not_attempted']} not attempted — 'not attempted' is not "
+                f"evidence either way"
+            )
+        elif verify:
+            console.print("[yellow]nothing was verified[/yellow] — the sandbox "
+                          "gate refused --verify (see REMEDIATION.md)")
         console.print(f"artifacts: {summary['out_dir']}")
     except Exception as e:
         console.print(f"[red]failed[/red] {type(e).__name__}: {e}")

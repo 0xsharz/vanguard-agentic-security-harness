@@ -11,8 +11,8 @@ hand-built, no network):
     and a `guidance_only` record (no diff); rejects a bad `status` enum.
   - run_remediate: writes patches/*.diff, tests/*, remediation.json,
     REMEDIATION.md; denied findings are guidance-only (no diff file);
-    needs_verification=true on patches; --verify logs the deferred notice and
-    does NOT execute; a per-finding agent error is fail-soft.
+    needs_verification=true on patches unless --verify proves RED->GREEN; a
+    per-finding agent error is fail-soft.
   - Every written artifact is redacted (a secret in evidence/description does not
     leak into REMEDIATION.md or remediation.json).
 """
@@ -31,7 +31,7 @@ from vash.json_utils import validate_schema
 from vash.remediation_policy import GUIDANCE_ONLY, PATCH, load_policy
 from vash.runner import AgentResult, AgentRunError
 from vash.stages._common import StageContext
-from vash.stages.remediate import DEFERRED_VERIFY_MSG, run_remediate
+from vash.stages.remediate import VERIFY_ENABLED_MSG, run_remediate
 from vash.state import StateDB
 
 REPO = Path(__file__).resolve().parent.parent
@@ -310,12 +310,22 @@ async def test_run_remediate_denied_cwe_guidance_no_diff(tmp_path: Path, monkeyp
     assert rec["guidance"]                                      # has prose guidance
 
 
-async def test_run_remediate_verify_logs_deferred_and_does_not_execute(
+async def test_run_remediate_verify_runs_the_security_test(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
+    """--verify past the gate reaches the verifier, and its verdict — here a
+    stubbed RED->GREEN — is what clears needs_verification."""
     captured: list[dict] = []
     monkeypatch.setattr(remediate_mod, "run_agent",
                         _fake_run_agent_factory(captured, PATCH_PAYLOAD))
+    seen: list[dict] = []
+
+    def fake_verify_patch(workspace, **kw):
+        seen.append(kw)
+        return {"verdict": "verified", "reason": "RED->GREEN (stub)",
+                "pre_patch": "fail", "post_patch": "pass"}
+
+    monkeypatch.setattr(remediate_mod, "verify_patch", fake_verify_patch)
     policy = _write_policy(tmp_path)
     out = tmp_path / "out"
     db = StateDB(tmp_path / "state.db")
@@ -323,23 +333,66 @@ async def test_run_remediate_verify_logs_deferred_and_does_not_execute(
         db.create_run(str(tmp_path), "r1")
         _seed_confirmed_canonical(db, "r1", "f_sqli_1")
         with caplog.at_level(logging.INFO, logger="vash.stages.remediate"):
-            # no_sandbox=True: since Phase 4.1, --verify FIRST passes through
-            # the vash.sandbox execution gate (tests/test_sandbox.py covers
-            # that gate itself + its refusal path in depth) — the dev escape
-            # here is what lets this test still reach the deferred-notice
-            # behavior below, hermetically, with no ambient sandbox needed.
+            # no_sandbox=True: --verify FIRST passes through the vash.sandbox
+            # execution gate (tests/test_sandbox.py covers that gate and its
+            # refusal path in depth) — the dev escape is what lets this test
+            # reach the verifier hermetically, with no ambient sandbox.
             summary = await run_remediate(_ctx(tmp_path), db, out_dir=out,
                                           policy_path=policy, verify=True,
                                           no_sandbox=True)
     finally:
         db.close()
 
-    assert DEFERRED_VERIFY_MSG in caplog.text                   # deferred notice logged
-    # Patch is still generate-only: needs_verification stays True, nothing executed.
-    assert summary["records"][0]["needs_verification"] is True
+    assert VERIFY_ENABLED_MSG in caplog.text
+    # The verifier saw the generated test, not the finding's source.
+    assert seen and seen[0]["test_path"] == PATCH_PAYLOAD["test_path"]
+    assert seen[0]["test_source"] == PATCH_PAYLOAD["security_test"]
+
+    rec = summary["records"][0]
+    assert rec["verification"]["verdict"] == "verified"
+    assert rec["needs_verification"] is False        # RED->GREEN clears it
     doc = json.loads((out / "remediation.json").read_text())
     assert doc["verify_requested"] is True
-    assert doc["verify_executed"] is False
+    assert doc["verify_executed"] is True
+    assert doc["verify_counts"]["verified"] == 1
+    md = (out / "REMEDIATION.md").read_text()
+    assert "RED→GREEN" in md
+
+
+async def test_run_remediate_verify_not_attempted_never_reads_as_verified(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The honesty rule, wired end to end: a test that could not run leaves
+    needs_verification True and says so in the report. This is the failure the
+    whole design is arranged around — `not_attempted` rendering as a pass would
+    report every dependency-carrying target as proven fixed."""
+    captured: list[dict] = []
+    monkeypatch.setattr(remediate_mod, "run_agent",
+                        _fake_run_agent_factory(captured, PATCH_PAYLOAD))
+    monkeypatch.setattr(
+        remediate_mod, "verify_patch",
+        lambda workspace, **kw: {"verdict": "not_attempted",
+                                 "reason": "no module named 'flask'"},
+    )
+    policy = _write_policy(tmp_path)
+    out = tmp_path / "out"
+    db = StateDB(tmp_path / "state.db")
+    try:
+        db.create_run(str(tmp_path), "r1")
+        _seed_confirmed_canonical(db, "r1", "f_sqli_1")
+        summary = await run_remediate(_ctx(tmp_path), db, out_dir=out,
+                                      policy_path=policy, verify=True,
+                                      no_sandbox=True)
+    finally:
+        db.close()
+
+    rec = summary["records"][0]
+    assert rec["needs_verification"] is True
+    assert summary["verify_counts"] == {"verified": 0, "not_verified": 0,
+                                        "not_attempted": 1, "not_run": 0}
+    md = (out / "REMEDIATION.md").read_text()
+    assert "verification NOT attempted" in md
+    assert "not evidence for or against" in md
 
 
 async def test_run_remediate_failsoft_on_agent_error(tmp_path: Path, monkeypatch) -> None:

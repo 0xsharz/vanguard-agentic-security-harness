@@ -2,12 +2,18 @@
 
 VASH's decoupled `remediate` / `validate` commands are static: read-only
 tools, no Bash, they never execute the target (see `config/stages.yaml`'s
-"static-first" comments on those two stages). The only place execution is
-ever contemplated for them is the DEFERRED `remediate --verify` (running the
-target's own test suite to check a generated patch). This module is the gate
-any such execution MUST pass: `sandbox.require()` either returns (execution
-permitted) or raises `SandboxError` (it may not) — it decides PERMISSION
-only, it never executes anything itself.
+"static-first" comments on those two stages). The one exception is
+`remediate --verify`, which runs the generated security test against the
+patched and the unpatched copy. This module is the gate that execution MUST
+pass: `sandbox.require()` either returns (execution permitted) or raises
+`SandboxError` (it may not) — it decides PERMISSION only, it never executes
+anything itself.
+
+The verify wiring tests below stub out `verify_patch`: what they assert is
+whether the gate lets execution through, not what the runner concludes
+(`tests/test_remediate_verify.py` owns that). Stubbing it also keeps this
+file's promise that every test here is hermetic — a real verify run would
+spawn interpreters.
 
 (The core `vash run` scan pipeline's Hunt/Trace stages are a separate,
 pre-existing concern — they intentionally compile/run local PoCs and are
@@ -27,9 +33,9 @@ Contracts exercised:
     allow_no_sandbox=True regardless of sandbox state.
   - run_remediate(verify=True, ...) wiring: the gate runs FIRST in the verify
     branch; a refusal is fail-soft (recorded on the patched record's
-    risk_notes, batch still completes, needs_verification stays True); a
-    pass (sandbox present, or the --dangerously-no-sandbox escape) reaches
-    the existing deferred-verify notice unchanged, no raise.
+    risk_notes, batch still completes, needs_verification stays True, and the
+    verifier is never called); a pass (sandbox present, or the
+    --dangerously-no-sandbox escape) reaches the verifier, no raise.
   - CLI: `vash remediate` registers `--dangerously-no-sandbox`.
 """
 
@@ -47,8 +53,16 @@ from vash.config import load_config
 from vash.runner import AgentResult
 from vash.sandbox import SandboxError, is_sandboxed, require
 from vash.stages._common import StageContext
-from vash.stages.remediate import DEFERRED_VERIFY_MSG, run_remediate
+from vash.stages.remediate import VERIFY_ENABLED_MSG, run_remediate
 from vash.state import StateDB
+
+
+def _stub_verifier(calls: list[dict]):
+    """Records that the verifier was reached, and executes nothing."""
+    def fake_verify_patch(workspace, **kw):
+        calls.append(dict(kw, workspace=str(workspace)))
+        return {"verdict": "not_attempted", "reason": "stubbed in tests"}
+    return fake_verify_patch
 
 
 @pytest.fixture(autouse=True)
@@ -219,9 +233,12 @@ async def test_run_remediate_verify_no_sandbox_records_reason_failsoft(
 ) -> None:
     """No sandbox, no escape: the gate refuses. run_remediate does NOT raise
     (fail-soft) — patch generation is static and already happened — but the
-    refusal reason (the SandboxError message) lands on the record, and the
-    deferred-notice log line is never reached."""
+    refusal reason (the SandboxError message) lands on the record, the
+    gate-passed log line is never reached, and CRUCIALLY the verifier is never
+    called: a refused gate must mean nothing ran."""
     monkeypatch.setattr(remediate_mod, "run_agent", _fake_run_agent_factory(PATCH_PAYLOAD))
+    verify_calls: list[dict] = []
+    monkeypatch.setattr(remediate_mod, "verify_patch", _stub_verifier(verify_calls))
     policy = _write_policy(tmp_path)
     out = tmp_path / "out"
     db = StateDB(tmp_path / "state.db")
@@ -235,23 +252,27 @@ async def test_run_remediate_verify_no_sandbox_records_reason_failsoft(
     finally:
         db.close()
 
-    assert DEFERRED_VERIFY_MSG not in caplog.text        # gate refused first
+    assert VERIFY_ENABLED_MSG not in caplog.text         # gate refused first
     assert "VASH_SANDBOX" in caplog.text                 # refusal reason logged
+    assert verify_calls == []                            # nothing was executed
 
     rec = summary["records"][0]
     assert rec["status"] == "patched"                    # generation unaffected
     assert rec["needs_verification"] is True              # nothing executed
     assert "VASH_SANDBOX" in rec["risk_notes"]             # reason recorded per-finding
     assert (out / "patches" / "f_sqli_1.diff").is_file()   # static artifact still written
+    assert summary["verify_executed"] is False
 
 
-async def test_run_remediate_verify_dangerously_no_sandbox_reaches_deferred_notice(
+async def test_run_remediate_verify_dangerously_no_sandbox_reaches_verifier(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
     """--dangerously-no-sandbox (no_sandbox=True): the gate passes (with a
-    loud warning) and --verify proceeds to the existing deferred notice —
-    no raise, no fail-soft reason recorded on the finding."""
+    loud warning) and --verify proceeds to the verifier — no raise, no
+    fail-soft reason recorded on the finding."""
     monkeypatch.setattr(remediate_mod, "run_agent", _fake_run_agent_factory(PATCH_PAYLOAD))
+    verify_calls: list[dict] = []
+    monkeypatch.setattr(remediate_mod, "verify_patch", _stub_verifier(verify_calls))
     policy = _write_policy(tmp_path)
     out = tmp_path / "out"
     db = StateDB(tmp_path / "state.db")
@@ -265,19 +286,23 @@ async def test_run_remediate_verify_dangerously_no_sandbox_reaches_deferred_noti
     finally:
         db.close()
 
-    assert DEFERRED_VERIFY_MSG in caplog.text
+    assert VERIFY_ENABLED_MSG in caplog.text
+    assert len(verify_calls) == 1                            # the verifier ran
     rec = summary["records"][0]
+    # The stub verdict is not_attempted, which must NOT clear needs_verification.
     assert rec["needs_verification"] is True
     assert rec["risk_notes"] == PATCH_PAYLOAD["risk_notes"]   # untouched by the gate
 
 
-async def test_run_remediate_verify_env_sandbox_reaches_deferred_notice(
+async def test_run_remediate_verify_env_sandbox_reaches_verifier(
     tmp_path: Path, monkeypatch
 ) -> None:
     """VASH_SANDBOX=1 (is_sandboxed() alone, no_sandbox=False / default): the
     gate passes without needing the dev escape."""
     monkeypatch.setenv("VASH_SANDBOX", "1")
     monkeypatch.setattr(remediate_mod, "run_agent", _fake_run_agent_factory(PATCH_PAYLOAD))
+    verify_calls: list[dict] = []
+    monkeypatch.setattr(remediate_mod, "verify_patch", _stub_verifier(verify_calls))
     policy = _write_policy(tmp_path)
     out = tmp_path / "out"
     db = StateDB(tmp_path / "state.db")
@@ -290,6 +315,7 @@ async def test_run_remediate_verify_env_sandbox_reaches_deferred_notice(
     finally:
         db.close()
 
+    assert len(verify_calls) == 1
     rec = summary["records"][0]
     assert rec["needs_verification"] is True
     assert rec["risk_notes"] == PATCH_PAYLOAD["risk_notes"]
@@ -299,8 +325,11 @@ async def test_run_remediate_no_verify_never_touches_sandbox_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
     """verify=False (the default): the sandbox gate is not consulted at all
-    — no_sandbox/VASH_SANDBOX are irrelevant when --verify wasn't requested."""
+    — no_sandbox/VASH_SANDBOX are irrelevant when --verify wasn't requested —
+    and nothing is executed."""
     monkeypatch.setattr(remediate_mod, "run_agent", _fake_run_agent_factory(PATCH_PAYLOAD))
+    verify_calls: list[dict] = []
+    monkeypatch.setattr(remediate_mod, "verify_patch", _stub_verifier(verify_calls))
     policy = _write_policy(tmp_path)
     out = tmp_path / "out"
     db = StateDB(tmp_path / "state.db")
@@ -314,6 +343,8 @@ async def test_run_remediate_no_verify_never_touches_sandbox_gate(
 
     rec = summary["records"][0]
     assert rec["risk_notes"] == PATCH_PAYLOAD["risk_notes"]   # no gate note added
+    assert verify_calls == []                                 # and nothing ran
+    assert summary["verify_executed"] is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
