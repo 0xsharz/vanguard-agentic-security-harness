@@ -261,9 +261,29 @@ user- or config-supplied `Authorization`/token header reachable from the except 
        - If `poc_execution` is absent (a language VASH has no recipe for),
          proceed as before: pick the idiomatic toolchain yourself and say in
          `poc.notes` how you ran it.
+       - **Undecidable-class rule — some real bugs cannot be settled by
+         running code, and dropping them is a recall bug, not precision.**
+         Execution answers "did this behaviour occur?". It cannot answer
+         "was this behaviour *allowed*?" — that needs the intended policy,
+         which is not in the runtime. So for a finding whose whole claim is
+         about intent rather than behaviour — **broken access control /
+         IDOR, privilege escalation, business-logic and workflow abuse,
+         missing authorization, insecure-by-design defaults** — a PoC can
+         show user A reading user B's record, and still not establish that
+         doing so is wrong.
+         For these: DO report the finding, set `needs_poc: false`, and state
+         in `poc.notes`, in one line, **what you executed, what it showed,
+         and the specific policy question execution cannot answer** (e.g.
+         "GET /api/orders/2 as user 1 returned user 2's order; whether
+         cross-tenant reads are intended is not decidable from the runtime
+         — no owner check exists in the handler"). Cite the code that
+         *should* have carried the check. **Never drop such a finding for
+         want of executed proof**, and never dress it up as proven either.
      - If neither path produces a reproducible proof **and the toolchain was
-       actually present to attempt one**, lower severity by at least one step
-       or drop the finding. Never apply this rule to a PoC that could not run.
+       actually present to attempt one, and the finding is not of an
+       undecidable class above**, lower severity by at least one step or
+       drop the finding. Never apply this rule to a PoC that could not run,
+       nor to a claim execution was never able to settle.
    - If your description uses hedged words ("possibly", "might",
      "could"), set `hedged_language: true`.
 5. Emit `gaps_observed` for every file/area you wanted to inspect but

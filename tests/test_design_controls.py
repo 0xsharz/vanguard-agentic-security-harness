@@ -253,3 +253,46 @@ def test_validate_prompt_has_verify_empirically_pointer_not_proof_language() -> 
     # replace or weaken them.
     assert "verify defenses empirically" in text.lower()
     assert "prose never satisfies a gate" in text.lower()
+
+
+def _flat(path) -> str:
+    """Prompt text as one lowercase line, markdown emphasis removed."""
+    import re as _re
+    return _re.sub(r"\s+", " ", path.read_text().replace("*", "")).lower()
+
+
+def test_hunt_prompt_never_drops_a_finding_execution_cannot_settle() -> None:
+    """The zero-FP rule ("drop findings that don't reproduce") is precision
+    machinery, and applied bluntly it becomes a RECALL bug.
+
+    Execution answers "did this behaviour occur?". It cannot answer "was this
+    behaviour allowed?" — that needs the intended policy, which does not exist
+    in the runtime. A PoC can show user A reading user B's record and still not
+    establish that doing so is wrong. Without a carve-out, every broken-access-
+    control and business-logic finding is silently discarded on exactly the runs
+    that were supposed to be the most trustworthy.
+    """
+    # The prompt is hard-wrapped and uses markdown emphasis, so assert against
+    # a whitespace- and marker-normalised form rather than raw source lines.
+    lower = _flat(PROMPTS / "02-hunt.md")
+
+    # the carve-out exists and names the classes it covers
+    assert "undecidable-class rule" in lower
+    for cls in ("idor", "business-logic", "privilege escalation",
+                "missing authorization"):
+        assert cls in lower, f"undecidable-class rule does not cover {cls}"
+
+    # it must not be dressed up as proven, and must not be dropped
+    assert "never drop such a finding for want of executed proof" in lower
+    assert "never dress it up as proven" in lower
+
+    # and the drop rule itself has to acknowledge the exception, or the two
+    # instructions contradict each other and the model picks one at random
+    assert "nor to a claim execution was never able to settle" in lower
+
+
+def test_hunt_prompt_still_drops_findings_that_genuinely_did_not_reproduce() -> None:
+    """The carve-out must not swallow the zero-FP mechanism it sits next to."""
+    lower = _flat(PROMPTS / "02-hunt.md")
+    assert "drop / downgrade findings that don't reproduce" in lower
+    assert "lower severity by at least one step or drop the finding" in lower
