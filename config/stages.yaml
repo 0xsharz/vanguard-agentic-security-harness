@@ -8,8 +8,37 @@ defaults:
   repair_attempts: 1             # one re-emit chance on schema-validation failure
 
 stages:
+  # ---- effort ----------------------------------------------------------
+  # Output tokens are the largest cost line once the tool-loading fix lands
+  # (53.6% of a measured run) and `effort` is the direct lever on them. It is
+  # also the most dangerous knob in this file, so the rule is narrow:
+  #
+  #   A stage may be turned down ONLY if it cannot change WHICH findings are
+  #   delivered, or HOW MANY.
+  #
+  # That rule was learned the hard way. A first attempt set effort on gapfill
+  # and feedback because they "only synthesise" — but both call db.add_task, so
+  # they GENERATE hunt tasks. At effort=medium gapfill emitted zero tasks
+  # instead of six, and the whole pipeline collapsed behind it: 1 hunt task
+  # instead of 7, 1 finding instead of 8, 1 delivered instead of 5, 0 exploit
+  # chains instead of 3. The run got 90% cheaper and lost the planted CWE-78.
+  #
+  # Excluded, and why:
+  #   recon/gapfill/feedback  emit hunt tasks -> fewer tasks, less coverage
+  #   hunt/validate/trace     find, confirm, and prove reachability
+  #   dedupe                  assigns is_canonical, and canonical == delivered.
+  #                           D8 moved dmcg recall 2->4/11 through exactly this
+  #                           promotion step; it is not post-processing.
+  #   chain                   exploit chains ARE delivered output
+  #
+  # That leaves `report`, which renders prose from a payload the _attach_*
+  # helpers already assembled in Python. It cannot invent or drop a finding.
   recon:
     model: claude-opus-4-8
+    # Opus 4.8 runs WITHOUT thinking unless adaptive is explicit (Sonnet 5 does
+    # not — it is adaptive by default). Leaving this unset therefore gave the
+    # three stages chosen FOR their reasoning the least reasoning of any stage.
+    thinking: adaptive
     concurrency: 1
     tools: [Read, Grep, Glob, Bash]  # Bash = read-only git history mining ONLY
     max_turns: 60                # recon can be long
@@ -17,9 +46,20 @@ stages:
   hunt:
     model: claude-sonnet-5
     concurrency: 50
-    tools: [Read, Grep, Glob, Bash]  # Bash = PoC execution, ACTIVE ONLY inside a sandbox (runner strips it on a bare host)
+    # Bash = PoC execution, ACTIVE ONLY inside a sandbox (runner strips it on a bare host).
+    # Write/Edit author the PoC file itself: measured across every archived run,
+    # hunt made 98 successful Write + 38 successful Edit calls into its scratch
+    # dir (evil.py, poc_ssrf_oas.py, ...). They previously worked by accident —
+    # permission_mode=acceptEdits auto-approved them even though they were not
+    # declared here. Now that this list is the tools the model actually LOADS,
+    # omitting them would delete the executed-PoC authoring path.
+    tools: [Read, Grep, Glob, Bash, Write, Edit]
   validate:
     model: claude-opus-4-8        # different from hunt — deliberate disagreement
+    # Opus 4.8 runs WITHOUT thinking unless adaptive is explicit (Sonnet 5 does
+    # not — it is adaptive by default). Leaving this unset therefore gave the
+    # three stages chosen FOR their reasoning the least reasoning of any stage.
+    thinking: adaptive
     concurrency: 10
     tools: [Read, Grep, Glob]     # no Bash: pure analysis
   gapfill:
@@ -33,6 +73,10 @@ stages:
     tools: [Read]
   trace:
     model: claude-opus-4-8        # most critical stage
+    # Opus 4.8 runs WITHOUT thinking unless adaptive is explicit (Sonnet 5 does
+    # not — it is adaptive by default). Leaving this unset therefore gave the
+    # three stages chosen FOR their reasoning the least reasoning of any stage.
+    thinking: adaptive
     concurrency: 10
     tools: [Read, Grep, Glob, Bash]
   feedback:
@@ -48,6 +92,7 @@ stages:
     model: claude-sonnet-5
     concurrency: 1
     tools: [Read]
+    effort: low   # renders a report from data Python already assembled
   remediate:
     # Decoupled, opt-in `vash remediate` (NOT part of the scan loop). Patch
     # generation is high-stakes -> strong model. The agent EDITS files and git

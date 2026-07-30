@@ -54,6 +54,8 @@ async def run_trace(ctx: StageContext, db: StateDB) -> int:
                     artifact_dir=ctx.results_dir("trace"),
                     artifact_name=f.finding_id,
                     repair_attempts=sc.repair_attempts,
+                    effort=sc.effort,
+                    thinking=sc.thinking,
                     execution_enabled=ctx.execution_enabled,
                 )
             except (AgentRunError, TransientAgentError) as e:

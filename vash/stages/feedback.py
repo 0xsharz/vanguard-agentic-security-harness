@@ -44,6 +44,8 @@ async def run_feedback(ctx: StageContext, db: StateDB,
             artifact_dir=ctx.results_dir("feedback"),
             artifact_name="feedback",
             repair_attempts=sc.repair_attempts,
+            effort=sc.effort,
+            thinking=sc.thinking,
         )
     except (AgentRunError, TransientAgentError) as e:
         log.warning("[%s] feedback failed: %s", ctx.run_id, e)

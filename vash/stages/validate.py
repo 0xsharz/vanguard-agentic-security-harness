@@ -52,6 +52,48 @@ def _apply_cvss(db: StateDB, finding_id: str, payload: dict) -> dict:
     return payload
 
 
+def _identity_key(f: Finding) -> tuple:
+    """The tuple that makes two findings PROVABLY the same finding.
+
+    Same file, same exact line range, same vulnerability class. This is
+    deliberately the strictest possible key — it involves no judgement, no
+    similarity threshold, and no model call, so collapsing on it cannot merge
+    two things a human would call different. Anything looser (same file, or
+    overlapping ranges, or related classes) is a semantic decision and belongs
+    to Dedupe, which runs later with an LLM and a prompt for exactly that.
+    """
+    return (f.file, f.line_start, f.line_end, f.vuln_class)
+
+
+def _partition_duplicates(
+    findings: list[Finding],
+) -> tuple[list[Finding], dict[str, list[Finding]]]:
+    """Split findings into (representatives, {rep_finding_id: [duplicates]}).
+
+    Validate costs one full agent call per finding, and each call re-reads the
+    same file into a fresh context. When Hunt raises the identical finding from
+    two different tasks — which it does, because taint/specialist/catchall
+    legitimately hunt the same file for different attack classes — the pipeline
+    pays twice for the same verdict. Measured: 7 exact duplicates on
+    dmcg-outperform (~$3.31) and 3 on jsonschema (~$1.13).
+
+    Order is preserved and the representative is the first occurrence, so this
+    is deterministic across runs.
+    """
+    reps: list[Finding] = []
+    dupes: dict[str, list[Finding]] = {}
+    seen: dict[tuple, Finding] = {}
+    for f in findings:
+        k = _identity_key(f)
+        rep = seen.get(k)
+        if rep is None:
+            seen[k] = f
+            reps.append(f)
+        else:
+            dupes.setdefault(rep.finding_id, []).append(f)
+    return reps, dupes
+
+
 async def run_validate(ctx: StageContext, db: StateDB) -> int:
     """Validate every finding that hasn't been validated yet. Returns
     count of confirmed findings."""
@@ -63,10 +105,22 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
     sc = ctx.stage("validate")
     sem = asyncio.Semaphore(sc.concurrency)
 
+    # Exact duplicates inherit their representative's verdict instead of buying
+    # their own agent call. Every finding still ends up with a verdict and a
+    # severity — the saving is in agent calls, not in coverage.
+    reps, dupes_by_rep = _partition_duplicates(unvalidated)
+    n_dupes = sum(len(v) for v in dupes_by_rep.values())
+
     log.info(
         "[%s] validate: %d findings (concurrency=%d, model=%s)",
         ctx.run_id, len(unvalidated), sc.concurrency, sc.model,
     )
+    if n_dupes:
+        log.info(
+            "[%s] validate: %d of those are exact duplicates (same file+lines+class) "
+            "— %d agent calls instead of %d",
+            ctx.run_id, n_dupes, len(reps), len(unvalidated),
+        )
 
     tasks_by_id = {t.task_id: t for t in db.get_all_tasks(ctx.run_id)}
     counters = {"confirmed": 0, "rejected": 0, "needs_more_info": 0, "failed": 0}
@@ -77,6 +131,32 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
     # section and the pre-existing "Verify defenses empirically" rule.
     recon = db.get_recon_output(ctx.run_id) or {}
     design_controls = recon.get("design_controls", [])
+
+    def _propagate(rep: Finding, verdict: str, payload: dict) -> None:
+        """Give the representative's verdict to its exact duplicates.
+
+        Marked `inherited_from` in the stored payload rather than copied
+        silently: a reviewer reading validation_json must be able to tell that
+        no validator looked at THIS record, and which record it did look at.
+        The severity is re-derived from the same CVSS vector so a duplicate
+        cannot end up with a different severity than its representative.
+        """
+        for d in dupes_by_rep.get(rep.finding_id, []):
+            db.set_finding_validation(
+                d.finding_id, verdict,
+                {**payload, "finding_id": d.finding_id,
+                 "inherited_from": rep.finding_id,
+                 "inherited_reason": (
+                     "exact duplicate of the representative finding: same file, "
+                     "same line range, same vuln_class"
+                 )},
+            )
+            if verdict == "confirmed":
+                sev = _severity_from_cvss_rating(payload.get("cvss_rating"))
+                if sev:
+                    db.update_finding_severity(d.finding_id, sev)
+            counters[verdict] = counters.get(verdict, 0) + 1
+            counters["inherited"] = counters.get("inherited", 0) + 1
 
     async def _one(f: Finding) -> None:
         async with sem:
@@ -112,6 +192,8 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
                     artifact_dir=ctx.results_dir("validate"),
                     artifact_name=f.finding_id,
                     repair_attempts=sc.repair_attempts,
+                    effort=sc.effort,
+                    thinking=sc.thinking,
                     execution_enabled=ctx.execution_enabled,
                 )
             except (AgentRunError, TransientAgentError) as e:
@@ -125,6 +207,10 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
                      "rationale": f"validator failed to produce schema-valid output: {e}",
                      "validator_confidence": 0.0},
                 )
+                _propagate(f, "needs_more_info",
+                           {"verdict": "needs_more_info",
+                            "rationale": "representative validation failed",
+                            "validator_confidence": 0.0})
                 return
 
             verdict = result.payload.get("verdict", "needs_more_info")
@@ -144,14 +230,18 @@ async def run_validate(ctx: StageContext, db: StateDB) -> int:
             db.add_artifact(ctx.run_id, "validate", f.finding_id, "jsonl",
                             str(result.artifact_path))
             counters[verdict] = counters.get(verdict, 0) + 1
+            _propagate(f, verdict, payload)
 
-    await asyncio.gather(*(_one(f) for f in unvalidated))
+    await asyncio.gather(*(_one(f) for f in reps))
     log.info(
-        "[%s] validate: confirmed=%d rejected=%d needs_more_info=%d failed=%d",
+        "[%s] validate: confirmed=%d rejected=%d needs_more_info=%d failed=%d "
+        "(%d verdicts inherited by exact duplicates, %d agent calls)",
         ctx.run_id,
         counters.get("confirmed", 0),
         counters.get("rejected", 0),
         counters.get("needs_more_info", 0),
         counters["failed"],
+        counters.get("inherited", 0),
+        len(reps),
     )
     return counters.get("confirmed", 0)

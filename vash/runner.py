@@ -150,6 +150,8 @@ async def run_agent(
     transient_retries: int = 3,
     transient_base_delay: float = 30.0,
     execution_enabled: bool = False,
+    effort: str | None = None,
+    thinking: str | None = None,
 ) -> AgentResult:
     """Run one agent, retrying transient API errors with exponential backoff.
 
@@ -184,6 +186,8 @@ async def run_agent(
                 artifact_dir=artifact_dir,
                 artifact_name=artifact_name,
                 repair_attempts=repair_attempts,
+                effort=effort,
+                thinking=thinking,
             )
         except QuotaExhaustedError:
             raise
@@ -223,6 +227,8 @@ async def _run_agent_once(
     artifact_dir: Path,
     artifact_name: str,
     repair_attempts: int,
+    effort: str | None = None,
+    thinking: str | None = None,
 ) -> AgentResult:
     """Single attempt. Raises TransientAgentError / QuotaExhaustedError
     before schema validation if the API returned is_error=True."""
@@ -243,8 +249,50 @@ async def _run_agent_once(
         "`additionalProperties: false`.\n\n"
         f"```json\n{schema_text}\n```\n"
     )
+    # `tools` and `allowed_tools` are NOT the same knob, and using only the
+    # latter was costing ~69% of every agent's context window:
+    #   allowed_tools -> "auto-allowed WITHOUT PROMPTING for permission"
+    #   tools         -> "the base set of AVAILABLE built-in tools"
+    # Passing only `allowed_tools` left the full Claude Code preset LOADED — 31
+    # tool schemas (CronCreate, DesignSync, Workflow, PushNotification, ...) plus
+    # 42 slash commands — on every turn of every task. Measured on this SDK
+    # version: 23,879 tokens of context with the preset vs 8,817 with hunt's six
+    # real tools. Turns re-send the whole context, so that dead weight was
+    # multiplied by ~13 turns x ~200 agent calls per run.
+    #
+    # Passing the SAME list to both makes the declared config the effective one:
+    # exactly these tools exist, and they are auto-approved. Three consequences
+    # worth knowing:
+    #   * The R1 Bash gate becomes STRUCTURAL. `_gate_tools` already stripped
+    #     Bash from this list on a bare host; now that also removes it from the
+    #     model's context, so the model cannot even attempt the call. Previously
+    #     it tried and was denied — 348 denied Bash calls across archived runs,
+    #     each one a wasted turn.
+    #   * `ReportFindings` disappears. It is a Claude Code built-in that looks
+    #     exactly like what a security agent should call, and hunt/validate
+    #     called it 445 times — but run_agent validates the final TEXT against
+    #     the finding schema and never parses tool_use blocks, so every one of
+    #     those calls went nowhere.
+    #   * `ToolSearch`/`Task`/`Agent` disappear, so a stage can no longer
+    #     accidentally fan out into subagents it was never configured for.
+    # `effort` is omitted entirely when unset so the SDK default (`high`) still
+    # applies — that keeps every stage that does not opt in byte-identical to
+    # the pre-effort behaviour, rather than pinning "high" explicitly and
+    # inheriting whatever that alias means in a future SDK.
+    opt_kw: dict[str, Any] = {}
+    if effort is not None:
+        opt_kw["effort"] = effort
+    if thinking is not None:
+        # display="summarized" is FREE: thinking happens and is billed
+        # identically under every display setting — the flag only controls
+        # whether the text comes back. Opus 4.8 defaults it to "omitted", which
+        # would stream empty ThinkingBlocks into the JSONL artifact. For a
+        # security tool the reasoning behind a finding is audit evidence, so we
+        # ask for the summary and _drain persists it.
+        opt_kw["thinking"] = {"type": thinking, "display": "summarized"}
     options = ClaudeAgentOptions(
         system_prompt=system_prompt,
+        tools=allowed_tools,
         allowed_tools=allowed_tools,
         model=model,
         max_turns=max_turns,
@@ -252,6 +300,7 @@ async def _run_agent_once(
         add_dirs=[str(p) for p in (add_dirs or [])],
         permission_mode=permission_mode,
         setting_sources=[],
+        **opt_kw,
     )
 
     initial_prompt = json.dumps(user_input, ensure_ascii=False)

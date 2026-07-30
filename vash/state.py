@@ -5,6 +5,7 @@ orchestration, resume, and reporting."""
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -12,6 +13,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+
+log = logging.getLogger(__name__)
 
 
 SCHEMA = """
@@ -186,6 +189,22 @@ class StateDB:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path))
         self._conn.row_factory = sqlite3.Row
+        # WAL + a real busy timeout. The default rollback journal ("delete")
+        # corrupted this database mid-run on 2026-07-30: the run died at dedupe
+        # with "database disk image is malformed", losing every stage after
+        # validate, and it took every PRIOR run's history with it (recoverable
+        # only via `sqlite3 .recover`). One file, git-ignored, no backup, holding
+        # every benchmark number this project has ever published — a failed write
+        # here also throws away 100% of a run's API spend, so this is a cost fix
+        # as much as a durability one. WAL tolerates concurrent readers against a
+        # writer, which is exactly the shape here: one writer plus whatever is
+        # inspecting results while a scan runs.
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
+            self._conn.execute("PRAGMA synchronous=FULL")
+        except sqlite3.DatabaseError as e:  # never block a run on a pragma
+            log.warning("state: could not enable WAL (%s) — continuing", e)
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 

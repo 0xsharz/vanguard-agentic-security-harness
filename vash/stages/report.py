@@ -69,6 +69,8 @@ async def run_report(ctx: StageContext, db: StateDB) -> Path:
             artifact_dir=ctx.results_dir("report"),
             artifact_name="report_agent",
             repair_attempts=max(sc.repair_attempts, 2),  # report MUST validate
+            effort=sc.effort,
+            thinking=sc.thinking,
         )
     except (AgentRunError, TransientAgentError) as e:
         log.error("[%s] report agent failed: %s — emitting fallback report",

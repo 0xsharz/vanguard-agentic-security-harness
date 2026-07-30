@@ -87,6 +87,8 @@ async def run_chain(ctx: StageContext, db: StateDB) -> int:
             artifact_dir=ctx.results_dir("chain"),
             artifact_name="chain",
             repair_attempts=sc.repair_attempts,
+            effort=sc.effort,
+            thinking=sc.thinking,
         )
     except (AgentRunError, TransientAgentError) as e:
         # Fail-soft: a chain-stage failure must NEVER abort the run (mirror
